@@ -75,7 +75,25 @@ if df_raw is not None and not df_raw.empty:
         st.subheader("Detalle de Posiciones")
         df_display = df[['ticker', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].round(2)
         st.dataframe(df_display, use_container_width=True)
+        
+# ... (mantén las funciones de carga de arriba)
 
+st.sidebar.title("Configuración")
+moneda_vmo = st.sidebar.selectbox("Moneda de Visualización", ["USD", "ARS (Ajustado por Inflación)"])
+
+# Filtro por tipo de activo
+tipos = ["Todos"] + df['tipo_activo'].unique().tolist()
+filtro_tipo = st.sidebar.multiselect("Filtrar por tipo", tipos, default="Todos")
+
+if "Todos" not in filtro_tipo:
+    df = df[df['tipo_activo'].isin(filtro_tipo)]
+
+# Lógica de conversión (Simulada para el ejemplo, luego la vinculamos a tu tabla de índices)
+if moneda_vmo == "ARS (Ajustado por Inflación)":
+    # Aquí multiplicamos por un coeficiente inflacionario que traeremos de tu hoja
+    coef_inflacion = 1.15 # Ejemplo: 15% de inflación acumulada
+    df['valor_actual'] = df['valor_actual'] * 1200 # Simulando valor MEP actual
+    df['costo_total'] = df['costo_total'] * 1000 * coef_inflacion # Precio compra * Dólar entonces * Inflación
     except Exception as e:
         st.error(f"Error en el procesamiento: {e}")
         st.write("Datos técnicos para soporte:", df[['ticker', 'precio_actual']].head())
