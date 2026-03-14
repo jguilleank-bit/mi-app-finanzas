@@ -3,14 +3,14 @@ import pandas as pd
 import yfinance as yf
 import plotly.express as px
 import requests
+from datetime import datetime
 
 st.set_page_config(page_title="Terminal Inversiones Argentina", layout="wide")
 
 def formato_ars(valor):
     try:
         return f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "0,00"
+    except: return "0,00"
 
 @st.cache_data(ttl=600)
 def get_dolar_mep():
@@ -18,8 +18,7 @@ def get_dolar_mep():
         url = "https://criptoya.com/api/dolar"
         resp = requests.get(url, timeout=5).json()
         return float(resp['mep']['al30']['ci']['price'])
-    except:
-        return 1450.0
+    except: return 1450.0
 
 def load_data(url):
     try:
@@ -28,8 +27,7 @@ def load_data(url):
         df = pd.read_csv(csv_url)
         df.columns = df.columns.str.strip().str.lower()
         return df
-    except:
-        return None
+    except: return None
 
 def limpiar_numero(serie):
     s = serie.astype(str).str.replace(r'[^\d,.-]', '', regex=True)
@@ -54,70 +52,61 @@ if df_raw is not None and not df_raw.empty:
         df['cotizacion_mep_dia'] = limpiar_numero(df.get('cotizacion_mep_dia', pd.Series([mep_hoy]*len(df))))
         df['cotizacion_mep_dia'] = df['cotizacion_mep_dia'].replace(0.0, mep_hoy)
 
+        # Precios en vivo
         tickers = df['ticker'].dropna().unique().tolist()
-        precios_en_ars = {}
+        precios_ars = {}
+        for t in tickers:
+            try:
+                tkr = yf.Ticker(t)
+                last = tkr.history(period="1d")['Close'].iloc[-1]
+                precios_ars[t] = float(last) if ".BA" in t else float(last) * mep_hoy
+            except: precios_ars[t] = 0.0
 
-        with st.spinner('Actualizando cotizaciones...'):
-            for t in tickers:
-                try:
-                    tkr = yf.Ticker(t)
-                    last_price = tkr.history(period="1d")['Close'].iloc[-1]
-                    # Si no es Cedear (.BA), asumimos que el precio de Yahoo está en USD y pesificamos
-                    precios_en_ars[t] = float(last_price) if ".BA" in t else float(last_price) * mep_hoy
-                except:
-                    precios_en_ars[t] = 0.0
+        # Cálculos de rentabilidad temporal
+        hoy = pd.Timestamp.now()
+        df['dias_antiguedad'] = (hoy - df['fecha']).dt.days
+        df['costo_total_ars'] = df['cantidad'] * df['precio_unitario']
+        df['costo_ajustado_hoy'] = (df['costo_total_ars'] / df['cotizacion_mep_dia']) * mep_hoy
+        df['valor_actual_ars'] = df.apply(lambda r: precios_ars.get(r['ticker'], 0) * r['cantidad'], axis=1)
+        df['ganancia_ars'] = df['valor_actual_ars'] - df['costo_ajustado_hoy']
 
-        # CÁLCULOS UNIFICADOS
-        df['costo_total_ars'] = (df['cantidad'] * df['precio_unitario'])
-        df['costo_usd_compra'] = df['costo_total_ars'] / df['cotizacion_mep_dia']
-        df['costo_ajustado_hoy'] = df['costo_usd_compra'] * mep_hoy
-        df['valor_actual_ars'] = df.apply(lambda r: precios_en_ars.get(r['ticker'], 0) * r['cantidad'], axis=1)
-        df['ganancia_real_ars'] = df['valor_actual_ars'] - df['costo_ajustado_hoy']
-
-        # Ajuste de moneda para visualización
+        # Conversión de vista
         f = 1.0 if moneda_view == "ARS (Pesos)" else (1.0 / mep_hoy)
         s = "$" if moneda_view == "ARS (Pesos)" else "USD"
 
-        # --- MÉTRICAS CON TENDENCIA (DELTA) ---
-        total_inv_ajustada = df['costo_ajustado_hoy'].sum() * f
-        total_valor_actual = df['valor_actual_ars'].sum() * f
-        ganancia_total = total_valor_actual - total_inv_ajustada
-        rendimiento_pct = ((total_valor_actual / total_inv_ajustada) - 1) * 100 if total_inv_ajustada > 0 else 0.0
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Inversión Ajustada", f"{s} {formato_ars(total_inv_ajustada)}")
+        # Métricas principales
+        inv_total = df['costo_ajustado_hoy'].sum() * f
+        val_total = df['valor_actual_ars'].sum() * f
+        gan_total = val_total - inv_total
+        rend_total_pct = ((val_total / inv_total) - 1) * 100 if inv_total > 0 else 0
         
-        # Aquí vuelve el valor en verde indicando la ganancia absoluta
-        c2.metric("Valor Actual Cartera", 
-                  f"{s} {formato_ars(total_valor_actual)}", 
-                  delta=f"{s} {formato_ars(ganancia_total)}")
-        
-        c3.metric("Rendimiento Total", f"{rendimiento_pct:.2f}%")
+        # Rendimiento Anualizado Estimado (TIR simplificada)
+        antiguedad_media = df['dias_antiguedad'].mean()
+        años = antiguedad_media / 365
+        rend_anualizado = ((1 + rend_total_pct/100)**(1/años) - 1) * 100 if años > 0.1 else rend_total_pct
 
-        st.markdown("---")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Inversión Ajustada", f"{s} {formato_ars(inv_total)}")
+        m2.metric("Valor Cartera", f"{s} {formato_ars(val_total)}", delta=f"{s} {formato_ars(gan_total)}")
+        m3.metric("Rendimiento Total", f"{rend_total_pct:.2f}%")
+        m4.metric("Rendimiento Anualizado", f"{rend_anualizado:.2f}%", help="Equivalente anual de tu ganancia")
 
-        # Gráficos
-        df_g = df.groupby('ticker').agg({'valor_actual_ars':'sum', 'ganancia_real_ars':'sum'}).reset_index()
+        st.info(f"📅 **Contexto temporal:** Tu cartera tiene una antigüedad promedio de **{antiguedad_media:.0f} días** (~{años:.1f} años).")
+
+        # Gráficos y Tabla
         g1, g2 = st.columns(2)
-        with g1:
-            fig_pie = px.pie(df_g, values='valor_actual_ars', names='ticker', title="Distribución de Cartera", hole=.4)
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with g2:
-            fig_bar = px.bar(df_g, x='ticker', y=df_g['ganancia_real_ars']*f, color='ganancia_real_ars', 
-                             title=f"Ganancia/Pérdida por Activo ({s})", color_continuous_scale='RdYlGn')
-            st.plotly_chart(fig_bar, use_container_width=True)
+        df_g = df.groupby('ticker').agg({'valor_actual_ars':'sum', 'ganancia_ars':'sum'}).reset_index()
+        with g1: st.plotly_chart(px.pie(df_g, values='valor_actual_ars', names='ticker', title="Distribución", hole=.4), use_container_width=True)
+        with g2: st.plotly_chart(px.bar(df_g, x='ticker', y=df_g['ganancia_ars']*f, color='ganancia_ars', title=f"Ganancia por Activo ({s})", color_continuous_scale='RdYlGn'), use_container_width=True)
 
-        st.subheader("Detalle de Posiciones")
-        df_p = pd.DataFrame({
+        st.subheader("Análisis por Operación")
+        df_tab = pd.DataFrame({
+            'Fecha': df['fecha'].dt.strftime('%d/%m/%y'),
             'Ticker': df['ticker'],
-            'Cant.': df['cantidad'],
-            'Costo Compra': (df['costo_total_ars'] * f).apply(lambda x: f"{s} {formato_ars(x)}"),
-            'Valor Hoy': (df['valor_actual_ars'] * f).apply(lambda x: f"{s} {formato_ars(x)}"),
-            'Ganancia Real': (df['ganancia_real_ars'] * f).apply(lambda x: f"{s} {formato_ars(x)}")
+            'Días': df['dias_antiguedad'],
+            'Rend. Simple': ((df['valor_actual_ars']/df['costo_ajustado_hoy'] - 1)*100).map("{:.1f}%".format),
+            'Valor Hoy': (df['valor_actual_ars']*f).apply(lambda x: f"{s} {formato_ars(x)}")
         })
-        st.dataframe(df_p, use_container_width=True)
+        st.dataframe(df_tab, use_container_width=True)
 
-    except Exception as e:
-        st.error(f"Error en los cálculos: {e}")
-else:
-    st.warning("No se detectaron datos en la hoja.")
+    except Exception as e: st.error(f"Error: {e}")
