@@ -2,8 +2,21 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.express as px
+import requests
 
-st.set_page_config(page_title="Terminal Inversiones Pro", layout="wide")
+# 1. Configuración de página de 1er Nivel
+st.set_page_config(page_title="Terminal Financiera Argentina", layout="wide")
+
+# 2. Funciones de Datos
+def get_dolar_mep():
+    try:
+        # API gratuita de CriptoYa para Dólar MEP (AL30)
+        url = "https://criptoya.com/api/dolar"
+        response = requests.get(url)
+        data = response.json()
+        return float(data['mep']['al30']['ci']['price'])
+    except:
+        return 1250.0  # Valor de respaldo por si falla la API
 
 def load_data(url):
     try:
@@ -15,87 +28,78 @@ def load_data(url):
     except:
         return None
 
+# 3. Interfaz y Carga
 st.title("🚀 Mi Portfolio de Inversiones")
 
-# CONFIGURACIÓN: PEGA TU LINK AQUÍ
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
+# --- REEMPLAZA ESTE LINK CON EL TUYO ---
+SHEET_URL = "TU_LINK_DE_GOOGLE_SHEETS_AQUI"
 
 df_raw = load_data(SHEET_URL)
+mep_hoy = get_dolar_mep()
+
+# 4. Barra Lateral (Sidebar)
+st.sidebar.header("Configuración")
+moneda_view = st.sidebar.selectbox("Visualizar en:", ["USD (Dólares)", "ARS (Pesos MEP)"])
 
 if df_raw is not None and not df_raw.empty:
     try:
         df = df_raw.copy()
         df['fecha'] = pd.to_datetime(df['fecha'])
         
-        # 1. Obtener Precios de forma ultra-robusta
+        # Obtener precios de mercado
         tickers = df['ticker'].unique().tolist()
-        with st.spinner('Consultando mercado...'):
-            # Descargamos los datos
-            data = yf.download(tickers, period="1d")['Close']
+        with st.spinner('Consultando mercado internacional...'):
+            data_yf = yf.download(tickers, period="1d")['Close']
             
-            # Si es un solo ticker, data es una Serie. Si son varios, un DataFrame.
-            # Convertimos siempre a un diccionario limpio de {Ticker: Precio}
             if len(tickers) == 1:
-                precios_dict = {tickers[0]: float(data.iloc[-1])}
+                precios_dict = {tickers[0]: float(data_yf.iloc[-1])}
             else:
-                precios_dict = data.iloc[-1].to_dict()
+                precios_dict = data_yf.iloc[-1].to_dict()
 
-        # 2. Cálculos limpios
-        df['precio_actual'] = df['ticker'].map(precios_dict).astype(float)
+        # Cálculos de Negocio
+        df['precio_actual_usd'] = df['ticker'].map(precios_dict).astype(float)
         df['cantidad'] = df['cantidad'].astype(float)
-        df['precio_unitario'] = df['precio_unitario'].astype(float)
-        df['comision_total'] = df['comision_total'].fillna(0).astype(float)
+        df['precio_unitario_usd'] = df['precio_unitario'].astype(float) # Asumimos carga en USD para promediar
         
-        df['valor_actual'] = df['cantidad'] * df['precio_actual']
-        df['costo_total'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total']
+        # Valorización según moneda elegida
+        if moneda_view == "ARS (Pesos MEP)":
+            factor = mep_hoy
+            label = "ARS"
+            st.sidebar.info(f"Dólar MEP hoy: ${mep_hoy:,.2f}")
+        else:
+            factor = 1.0
+            label = "USD"
+
+        df['valor_actual'] = (df['cantidad'] * df['precio_actual_usd']) * factor
+        df['costo_total'] = (df['cantidad'] * df['precio_unitario_usd']) * factor
         df['ganancia_abs'] = df['valor_actual'] - df['costo_total']
-        
-        # 3. Dashboard visual
+
+        # 5. Dashboard (Métricas)
         total_inv = df['costo_total'].sum()
         total_act = df['valor_actual'].sum()
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Inversión Total", f"USD {total_inv:,.2f}")
-        m2.metric("Valor de Cartera", f"USD {total_act:,.2f}", f"{total_act-total_inv:,.2f}")
-        if total_inv > 0:
-            rend_total = ((total_act / total_inv) - 1) * 100
-            m3.metric("Rendimiento", f"{rend_total:.2f}%")
+        rend_porc = ((total_act / total_inv) - 1) * 100 if total_inv > 0 else 0
 
-        # 4. Gráficos interactivos
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Inversión Total", f"{label} {total_inv:,.2f}")
+        m2.metric("Valor de Cartera", f"{label} {total_act:,.2f}", f"{total_act-total_inv:,.2f}")
+        m3.metric("Rendimiento", f"{rend_porc:.2f}%")
+
+        # 6. Gráficos
         c1, c2 = st.columns(2)
         with c1:
-            fig_pie = px.pie(df, values='valor_actual', names='tipo_activo', title="Distribución de Cartera")
+            fig_pie = px.pie(df, values='valor_actual', names='ticker', title="Distribución por Activo", hole=0.4)
             st.plotly_chart(fig_pie, use_container_width=True)
         with c2:
-            fig_bar = px.bar(df, x='ticker', y='ganancia_abs', title="Ganancia/Pérdida por Activo",
+            fig_bar = px.bar(df, x='ticker', y='ganancia_abs', title=f"Ganancia/Pérdida ({label})",
                              color='ganancia_abs', color_continuous_scale='RdYlGn')
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        # 5. Tabla de detalle
+        # 7. Tabla Detallada
         st.subheader("Detalle de Posiciones")
-        df_display = df[['ticker', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].round(2)
-        st.dataframe(df_display, use_container_width=True)
-        
-# ... (mantén las funciones de carga de arriba)
+        df_tab = df[['ticker', 'cantidad', 'precio_actual_usd', 'valor_actual', 'ganancia_abs']].round(2)
+        st.dataframe(df_tab, use_container_width=True)
 
-st.sidebar.title("Configuración")
-moneda_vmo = st.sidebar.selectbox("Moneda de Visualización", ["USD", "ARS (Ajustado por Inflación)"])
-
-# Filtro por tipo de activo
-tipos = ["Todos"] + df['tipo_activo'].unique().tolist()
-filtro_tipo = st.sidebar.multiselect("Filtrar por tipo", tipos, default="Todos")
-
-if "Todos" not in filtro_tipo:
-    df = df[df['tipo_activo'].isin(filtro_tipo)]
-
-# Lógica de conversión (Simulada para el ejemplo, luego la vinculamos a tu tabla de índices)
-if moneda_vmo == "ARS (Ajustado por Inflación)":
-    # Aquí multiplicamos por un coeficiente inflacionario que traeremos de tu hoja
-    coef_inflacion = 1.15 # Ejemplo: 15% de inflación acumulada
-    df['valor_actual'] = df['valor_actual'] * 1200 # Simulando valor MEP actual
-    df['costo_total'] = df['costo_total'] * 1000 * coef_inflacion # Precio compra * Dólar entonces * Inflación
     except Exception as e:
-        st.error(f"Error en el procesamiento: {e}")
-        st.write("Datos técnicos para soporte:", df[['ticker', 'precio_actual']].head())
+        st.error(f"Hubo un problema procesando los activos: {e}")
 else:
-    st.info("💡 Consejo: Revisa que tu Google Sheet tenga datos y el link sea correcto.")
+    st.info("💡 Esperando datos de Google Sheets. Verifica que el link sea correcto y tenga filas cargadas.")
