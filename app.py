@@ -27,23 +27,30 @@ if df_raw is not None and not df_raw.empty:
         df = df_raw.copy()
         df['fecha'] = pd.to_datetime(df['fecha'])
         
-        # Obtener precios
+        # 1. Obtener Precios de forma ultra-robusta
         tickers = df['ticker'].unique().tolist()
         with st.spinner('Consultando mercado...'):
-            precios_data = yf.download(tickers, period="1d")['Close']
+            # Descargamos los datos
+            data = yf.download(tickers, period="1d")['Close']
             
-        if len(tickers) == 1:
-            precios_dict = {tickers[0]: precios_data.iloc[-1]}
-        else:
-            precios_dict = precios_data.iloc[-1].to_dict()
+            # Si es un solo ticker, data es una Serie. Si son varios, un DataFrame.
+            # Convertimos siempre a un diccionario limpio de {Ticker: Precio}
+            if len(tickers) == 1:
+                precios_dict = {tickers[0]: float(data.iloc[-1])}
+            else:
+                precios_dict = data.iloc[-1].to_dict()
 
-        # Cálculos
-        df['precio_actual'] = df['ticker'].map(precios_dict)
+        # 2. Cálculos limpios
+        df['precio_actual'] = df['ticker'].map(precios_dict).astype(float)
+        df['cantidad'] = df['cantidad'].astype(float)
+        df['precio_unitario'] = df['precio_unitario'].astype(float)
+        df['comision_total'] = df['comision_total'].fillna(0).astype(float)
+        
         df['valor_actual'] = df['cantidad'] * df['precio_actual']
-        df['costo_total'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total'].fillna(0)
+        df['costo_total'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total']
         df['ganancia_abs'] = df['valor_actual'] - df['costo_total']
         
-        # Dashboard
+        # 3. Dashboard visual
         total_inv = df['costo_total'].sum()
         total_act = df['valor_actual'].sum()
         
@@ -54,30 +61,23 @@ if df_raw is not None and not df_raw.empty:
             rend_total = ((total_act / total_inv) - 1) * 100
             m3.metric("Rendimiento", f"{rend_total:.2f}%")
 
-        # Gráficos
+        # 4. Gráficos interactivos
         c1, c2 = st.columns(2)
         with c1:
-            fig_pie = px.pie(df, values='valor_actual', names='tipo_activo', title="Distribución")
+            fig_pie = px.pie(df, values='valor_actual', names='tipo_activo', title="Distribución de Cartera")
             st.plotly_chart(fig_pie, use_container_width=True)
         with c2:
-            fig_bar = px.bar(df, x='ticker', y='ganancia_abs', title="Ganancia por Activo")
+            fig_bar = px.bar(df, x='ticker', y='ganancia_abs', title="Ganancia/Pérdida por Activo",
+                             color='ganancia_abs', color_continuous_scale='RdYlGn')
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        # TABLA FINAL ULTRA-ROBUSTA
+        # 5. Tabla de detalle
         st.subheader("Detalle de Posiciones")
-        
-        # Mostramos la tabla sin formatos complejos para asegurar que cargue
-        df_display = df[['ticker', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].copy()
-        
-        # Redondeamos los números manualmente antes de mostrar
-        df_display = df_display.round(2)
-        
-        # Usamos st.dataframe normal (sin .style) que es el más estable
+        df_display = df[['ticker', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].round(2)
         st.dataframe(df_display, use_container_width=True)
 
     except Exception as e:
-        st.error(f"Error en cálculos: {e}")
-        # En caso de error, mostramos los datos crudos para diagnosticar
-        st.write("Datos procesados hasta el error:", df)
+        st.error(f"Error en el procesamiento: {e}")
+        st.write("Datos técnicos para soporte:", df[['ticker', 'precio_actual']].head())
 else:
     st.info("💡 Consejo: Revisa que tu Google Sheet tenga datos y el link sea correcto.")
