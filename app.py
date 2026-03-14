@@ -65,4 +65,31 @@ if df_raw is not None and not df_raw.empty:
         with st.spinner('Actualizando mercado...'):
             for t in tickers:
                 try:
-                    tkr = yf
+                    tkr = yf.Ticker(t)
+                    hist = tkr.history(period="1d")
+                    if not hist.empty:
+                        last_px = float(hist['Close'].iloc[-1])
+                        precios_vivos_ars[t] = last_px if t.endswith(".BA") else last_px * mep_hoy
+                    else: precios_vivos_ars[t] = 0.0
+                except: precios_vivos_ars[t] = 0.0
+
+        # 4. CÁLCULOS
+        df['costo_ajustado_ars'] = (df['cantidad'] * df['precio_unitario'] / df['mep_compra']) * mep_hoy
+        df['valor_hoy_ars'] = df.apply(lambda r: precios_vivos_ars.get(r['ticker'], 0) * r['cantidad'], axis=1)
+        df['ganancia_ars'] = df['valor_hoy_ars'] - df['costo_ajustado_ars']
+
+        # 5. RESUMEN MACRO
+        inv_total_mkt = df['costo_ajustado_ars'].sum()
+        val_total_mkt = df['valor_hoy_ars'].sum()
+        gan_total_mkt = val_total_mkt - inv_total_mkt
+        tir_global = ((val_total_mkt / inv_total_mkt) - 1) * 100 if inv_total_mkt > 0 else 0
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Cartera Total", formato_moneda(val_total_mkt * fact, simb), delta=formato_moneda(gan_total_mkt * fact, simb))
+        m2.metric("Inversión Ajustada", formato_moneda(inv_total_mkt * fact, simb))
+        m3.metric("Rendimiento Total", f"{tir_global:.2f}%")
+
+        st.markdown("---")
+
+        # 6. TABLA COMPOSICIÓN POR TIPO + TORTA
+        st.subheader("📊 Res
