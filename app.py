@@ -15,11 +15,9 @@ def formato_moneda(valor, simbolo):
     except: return f"{simbolo} 0,00"
 
 def limpiar_precio(valor):
-    """Convierte formatos argentinos '9.484,59' a float 9484.59"""
     if pd.isna(valor) or valor == "": return 0.0
     s = str(valor).replace("$", "").strip()
-    if "." in s and "," in s:
-        s = s.replace(".", "")
+    if "." in s and "," in s: s = s.replace(".", "")
     s = s.replace(",", ".")
     try: return float(s)
     except: return 0.0
@@ -64,68 +62,7 @@ if df_raw is not None and not df_raw.empty:
         # 3. PRECIOS EN VIVO
         tickers = df['ticker'].dropna().unique().tolist()
         precios_vivos_ars = {}
-        with st.spinner('Sincronizando mercado...'):
+        with st.spinner('Actualizando mercado...'):
             for t in tickers:
                 try:
-                    tkr = yf.Ticker(t)
-                    last_px = float(tkr.history(period="1d")['Close'].iloc[-1])
-                    precios_vivos_ars[t] = last_px if t.endswith(".BA") else last_px * mep_hoy
-                except: precios_vivos_ars[t] = 0.0
-
-        # 4. CÁLCULOS
-        df['costo_ajustado_ars'] = (df['cantidad'] * df['precio_unitario'] / df['mep_compra']) * mep_hoy
-        df['valor_hoy_ars'] = df.apply(lambda r: precios_vivos_ars.get(r['ticker'], 0) * r['cantidad'], axis=1)
-        df['ganancia_ars'] = df['valor_hoy_ars'] - df['costo_ajustado_ars']
-
-        # 5. RESUMEN POR TIPO (CON FILA DE TOTALES)
-        st.subheader("📊 Composición por Clase de Activo")
-        
-        df_tipo = df.groupby('tipo_activo').agg({
-            'costo_ajustado_ars': 'sum',
-            'valor_hoy_ars': 'sum',
-            'ganancia_ars': 'sum'
-        }).reset_index().sort_values(by='valor_hoy_ars', ascending=False)
-        
-        # Cálculo de Totales
-        t_inv = df_tipo['costo_ajustado_ars'].sum()
-        t_val = df_tipo['valor_hoy_ars'].sum()
-        t_gan = df_tipo['ganancia_ars'].sum()
-        t_tir = ((t_val / t_inv) - 1) * 100 if t_inv > 0 else 0
-
-        c_tab, c_pie = st.columns([0.6, 0.4])
-        
-        with c_tab:
-            # Tabla formateada
-            df_tipo_v = pd.DataFrame({
-                'Tipo': df_tipo['tipo_activo'].str.upper(),
-                'Inversión': (df_tipo['costo_ajustado_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
-                'Valor Actual': (df_tipo['valor_hoy_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
-                'Ganancia': (df_tipo['ganancia_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
-                'Rend.': ((df_tipo['valor_hoy_ars']/df_tipo['costo_ajustado_ars']-1)*100).map("{:.1f}%".format)
-            })
-            
-            # Fila de Totales
-            fila_total = pd.DataFrame({
-                'Tipo': ['TOTAL'],
-                'Inversión': [formato_moneda(t_inv * fact, simb)],
-                'Valor Actual': [formato_moneda(t_val * fact, simb)],
-                'Ganancia': [formato_moneda(t_gan * fact, simb)],
-                'Rend.': [f"{t_tir:.1f}%"]
-            })
-            
-            df_final = pd.concat([df_tipo_v, fila_total], ignore_index=True)
-            st.dataframe(df_final, hide_index=True, use_container_width=True)
-
-        with c_pie:
-            st.plotly_chart(px.pie(df_tipo, values='valor_hoy_ars', names='tipo_activo', hole=.5, title="Diversificación"), use_container_width=True)
-
-        # 6. MÉTRICAS DESTACADAS
-        st.markdown("---")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Cartera Total", formato_moneda(t_val * fact, simb), delta=formato_moneda(t_gan * fact, simb))
-        m2.metric("Inversión (MEP Actual)", formato_moneda(t_inv * fact, simb))
-        m3.metric("Rendimiento (TIR)", f"{t_tir:.2f}%")
-
-    except Exception as e: st.error(f"Error: {e}")
-else:
-    st.info("Esperando datos de Google Sheets...")
+                    tkr = yf
