@@ -18,8 +18,8 @@ def get_dolar_mep():
         url = "https://criptoya.com/api/dolar"
         resp = requests.get(url, timeout=5).json()
         return float(resp['mep']['al30']['ci']['price'])
-    except Exception:
-        return 1450.0 # Valor de respaldo
+    except:
+        return 1450.0
 
 def load_data(url):
     try:
@@ -28,7 +28,7 @@ def load_data(url):
         df = pd.read_csv(csv_url)
         df.columns = df.columns.str.strip().str.lower()
         return df
-    except Exception:
+    except:
         return None
 
 def limpiar_numero(serie):
@@ -57,49 +57,57 @@ if df_raw is not None and not df_raw.empty:
         tickers = df['ticker'].dropna().unique().tolist()
         precios_en_ars = {}
 
-        with st.spinner('Sincronizando precios (BTC y Cedears)...'):
+        with st.spinner('Actualizando cotizaciones...'):
             for t in tickers:
                 try:
-                    # Si pides BTC-USD o cualquier cripto, lo pasamos a ARS usando el MEP
                     tkr = yf.Ticker(t)
                     last_price = tkr.history(period="1d")['Close'].iloc[-1]
-                    
-                    if ".BA" in t:
-                        precios_en_ars[t] = float(last_price)
-                    else:
-                        # Es un activo en USD (como BTC-USD), lo pesificamos al MEP de hoy
-                        precios_en_ars[t] = float(last_price) * mep_hoy
+                    # Si no es Cedear (.BA), asumimos que el precio de Yahoo está en USD y pesificamos
+                    precios_en_ars[t] = float(last_price) if ".BA" in t else float(last_price) * mep_hoy
                 except:
                     precios_en_ars[t] = 0.0
 
-        # Cálculos unificados en ARS
+        # CÁLCULOS UNIFICADOS
         df['costo_total_ars'] = (df['cantidad'] * df['precio_unitario'])
         df['costo_usd_compra'] = df['costo_total_ars'] / df['cotizacion_mep_dia']
         df['costo_ajustado_hoy'] = df['costo_usd_compra'] * mep_hoy
         df['valor_actual_ars'] = df.apply(lambda r: precios_en_ars.get(r['ticker'], 0) * r['cantidad'], axis=1)
         df['ganancia_real_ars'] = df['valor_actual_ars'] - df['costo_ajustado_hoy']
 
-        # Ajuste de visualización
+        # Ajuste de moneda para visualización
         f = 1.0 if moneda_view == "ARS (Pesos)" else (1.0 / mep_hoy)
         s = "$" if moneda_view == "ARS (Pesos)" else "USD"
 
-        # Métricas
-        t_inv = df['costo_ajustado_hoy'].sum() * f
-        t_mkt = df['valor_actual_ars'].sum() * f
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Inversión Ajustada", f"{s} {formato_ars(t_inv)}")
-        c2.metric("Valor Actual", f"{s} {formato_ars(t_mkt)}")
-        c3.metric("Rendimiento", f"{(((t_mkt/t_inv)-1)*100):.2f}%" if t_inv > 0 else "0%")
+        # --- MÉTRICAS CON TENDENCIA (DELTA) ---
+        total_inv_ajustada = df['costo_ajustado_hoy'].sum() * f
+        total_valor_actual = df['valor_actual_ars'].sum() * f
+        ganancia_total = total_valor_actual - total_inv_ajustada
+        rendimiento_pct = ((total_valor_actual / total_inv_ajustada) - 1) * 100 if total_inv_ajustada > 0 else 0.0
 
-        # Gráficos consolidados
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Inversión Ajustada", f"{s} {formato_ars(total_inv_ajustada)}")
+        
+        # Aquí vuelve el valor en verde indicando la ganancia absoluta
+        c2.metric("Valor Actual Cartera", 
+                  f"{s} {formato_ars(total_valor_actual)}", 
+                  delta=f"{s} {formato_ars(ganancia_total)}")
+        
+        c3.metric("Rendimiento Total", f"{rendimiento_pct:.2f}%")
+
+        st.markdown("---")
+
+        # Gráficos
         df_g = df.groupby('ticker').agg({'valor_actual_ars':'sum', 'ganancia_real_ars':'sum'}).reset_index()
         g1, g2 = st.columns(2)
         with g1:
-            st.plotly_chart(px.pie(df_g, values='valor_actual_ars', names='ticker', title="Reparto de Cartera", hole=.4), use_container_width=True)
+            fig_pie = px.pie(df_g, values='valor_actual_ars', names='ticker', title="Distribución de Cartera", hole=.4)
+            st.plotly_chart(fig_pie, use_container_width=True)
         with g2:
-            st.plotly_chart(px.bar(df_g, x='ticker', y=df_g['ganancia_real_ars']*f, color='ganancia_real_ars', title=f"Ganancia Real ({s})", color_continuous_scale='RdYlGn'), use_container_width=True)
+            fig_bar = px.bar(df_g, x='ticker', y=df_g['ganancia_real_ars']*f, color='ganancia_real_ars', 
+                             title=f"Ganancia/Pérdida por Activo ({s})", color_continuous_scale='RdYlGn')
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        st.subheader("Listado de Operaciones")
+        st.subheader("Detalle de Posiciones")
         df_p = pd.DataFrame({
             'Ticker': df['ticker'],
             'Cant.': df['cantidad'],
@@ -110,4 +118,6 @@ if df_raw is not None and not df_raw.empty:
         st.dataframe(df_p, use_container_width=True)
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error en los cálculos: {e}")
+else:
+    st.warning("No se detectaron datos en la hoja.")
