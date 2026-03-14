@@ -3,102 +3,76 @@ import pandas as pd
 import yfinance as yf
 import plotly.express as px
 import requests
-from datetime import datetime
 
-st.set_page_config(page_title="Portfolio Pro - Argentina", layout="wide")
+st.set_page_config(page_title="Portfolio Pro", layout="wide")
 
-# 1. UTILIDADES DE FORMATEO Y LIMPIEZA
-def formato_moneda(valor, simbolo):
+# 1. FUNCIONES DE APOYO
+def fmt_mon(v, s):
     try:
-        val_f = f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"{simbolo} {val_f}"
-    except: return f"{simbolo} 0,00"
+        vf = f"{float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{s} {vf}"
+    except: return f"{s} 0,00"
 
-def limpiar_precio(valor):
-    if pd.isna(valor) or valor == "": return 0.0
-    s = str(valor).replace("$", "").strip()
-    if "." in s and "," in s: s = s.replace(".", "")
-    s = s.replace(",", ".")
+def clean_px(v):
+    if pd.isna(v) or v == "": return 0.0
+    s = str(v).replace("$", "").replace(".", "").replace(",", ".").strip()
     try: return float(s)
     except: return 0.0
 
 @st.cache_data(ttl=600)
-def get_dolar_mep():
+def get_mep():
     try:
-        url = "https://criptoya.com/api/dolar"
-        resp = requests.get(url, timeout=5).json()
-        return float(resp['mep']['al30']['ci']['price'])
-    except: return 1450.0
+        return float(requests.get("https://criptoya.com/api/dolar").json()['mep']['al30']['ci']['price'])
+    except: return 1400.0
 
 def load_data(url):
     try:
-        sheet_id = url.split("/d/")[1].split("/")[0]
-        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-        df = pd.read_csv(csv_url)
+        sid = url.split("/d/")[1].split("/")[0]
+        df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv")
         df.columns = df.columns.str.strip().str.lower()
         return df
     except: return None
 
-# 2. CONFIGURACIÓN E INGESTIÓN
+# 2. INICIO Y DATOS
 st.title("🚀 Mi Portfolio de Inversiones")
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
-mep_hoy = get_dolar_mep()
+URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
+mep = get_mep()
 
-st.sidebar.header("Configuración")
-moneda_view = st.sidebar.selectbox("Visualizar en:", ["ARS (Pesos)", "USD (Dólares)"])
-simb = "$" if moneda_view == "ARS (Pesos)" else "USD"
-fact = 1.0 if moneda_view == "ARS (Pesos)" else (1.0 / mep_hoy)
+moneda = st.sidebar.selectbox("Moneda:", ["ARS (Pesos)", "USD (Dólares)"])
+simb, fact = ("$", 1.0) if moneda == "ARS (Pesos)" else ("USD", 1.0/mep)
 
-df_raw = load_data(SHEET_URL)
+df_raw = load_data(URL)
 
 if df_raw is not None and not df_raw.empty:
-    try:
-        df = df_raw.copy()
-        df['cantidad'] = df['cantidad'].apply(limpiar_precio)
-        df['precio_unitario'] = df['precio_unitario'].apply(limpiar_precio)
-        df['mep_compra'] = df['cotizacion_mep_dia'].apply(limpiar_precio).replace(0.0, mep_hoy)
+    df = df_raw.copy()
+    for col in ['cantidad', 'precio_unitario', 'cotizacion_mep_dia']:
+        df[col] = df[col].apply(clean_px)
+    
+    # Precios en Vivo
+    tkrs = df['ticker'].unique()
+    px_vivos = {}
+    with st.spinner('Sincronizando...'):
+        for t in tkrs:
+            try:
+                h = yf.Ticker(t).history(period="1d")
+                p = float(h['Close'].iloc[-1])
+                px_vivos[t] = p if t.endswith(".BA") else p * mep
+            except: px_vivos[t] = 0.0
 
-        # 3. PRECIOS VIVOS
-        tickers = df['ticker'].dropna().unique().tolist()
-        precios_vivos = {}
-        with st.spinner('Actualizando mercado...'):
-            for t in tickers:
-                try:
-                    tkr = yf.Ticker(t)
-                    hist = tkr.history(period="1d")
-                    if not hist.empty:
-                        px_last = float(hist['Close'].iloc[-1])
-                        precios_vivos[t] = px_last if t.endswith(".BA") else px_last * mep_hoy
-                    else: precios_vivos[t] = 0.0
-                except: precios_vivos[t] = 0.0
+    # Cálculos
+    df['costo_ars'] = (df['cantidad'] * df['precio_unitario'] / df['cotizacion_mep_dia'].replace(0, mep)) * mep
+    df['val_hoy_ars'] = df.apply(lambda r: px_vivos.get(r['ticker'], 0) * r['cantidad'], axis=1)
+    df['gan_ars'] = df['val_hoy_ars'] - df['costo_ars']
 
-        # 4. CÁLCULOS BASE
-        df['costo_ajustado_ars'] = (df['cantidad'] * df['precio_unitario'] / df['mep_compra']) * mep_hoy
-        df['valor_hoy_ars'] = df.apply(lambda r: precios_vivos.get(r['ticker'], 0) * r['cantidad'], axis=1)
-        df['ganancia_ars'] = df['valor_hoy_ars'] - df['costo_ajustado_ars']
+    # 3. MÉTRICAS TOP (Restauradas)
+    inv_t, val_t = df['costo_ars'].sum(), df['val_hoy_ars'].sum()
+    gan_t = val_t - inv_t
+    tir_t = ((val_t / inv_t) - 1) * 100 if inv_t > 0 else 0
 
-        # 5. MÉTRICAS PRINCIPALES (RESTAURADAS)
-        inv_total_global = df['costo_ajustado_ars'].sum()
-        val_total_global = df['valor_hoy_ars'].sum()
-        gan_total_global = val_total_global - inv_total_global
-        tir_global = ((val_total_global / inv_total_global) - 1) * 100 if inv_total_global > 0 else 0
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Valor Cartera", fmt_mon(val_t*fact, simb), f"{fmt_mon(gan_t*fact, simb)}")
+    c2.metric("Inversión Ajustada", fmt_mon(inv_t*fact, simb))
+    c3.metric("Rendimiento Total (TIR)", f"{tir_t:.2f}%")
+    st.markdown("---")
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Valor Actual Cartera", formato_moneda(val_total_global * fact, simb), delta=formato_moneda(gan_total_global * fact, simb))
-        m2.metric("Inversión Ajustada", formato_moneda(inv_total_global * fact, simb))
-        m3.metric("Rendimiento Total (TIR)", f"{tir_global:.2f}%")
-
-        st.markdown("---")
-
-        # 6. TABLA DE RESUMEN POR ACTIVO (CON FILA TOTAL)
-        st.subheader("📊 Composición por Clase de Activo")
-        df_tipo = df.groupby('tipo_activo').agg({
-            'costo_ajustado_ars': 'sum',
-            'valor_hoy_ars': 'sum',
-            'ganancia_ars': 'sum'
-        }).reset_index().sort_values(by='valor_hoy_ars', ascending=False)
-        
-        df_tipo_v = pd.DataFrame({
-            'Tipo': df_tipo['tipo_activo'].str.upper(),
-            'Inversión': (df_tipo['costo_ajustado_ars'] * fact).apply(lambda x: formato_moneda(x, simb)),
-            'Valor Actual': (df_tipo['valor_hoy_
+    # 4. TABLA CON
