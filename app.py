@@ -7,7 +7,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Portfolio Pro - Argentina", layout="wide")
 
-# 1. UTILIDADES
+# 1. UTILIDADES DE FORMATEO Y LIMPIEZA
 def formato_moneda(valor, simbolo):
     try:
         val_f = f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -84,7 +84,7 @@ if df_raw is not None and not df_raw.empty:
         tir_global = ((val_total_global / inv_total_global) - 1) * 100 if inv_total_global > 0 else 0
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Valor Total Cartera", formato_moneda(val_total_global * fact, simb), delta=formato_moneda(gan_total_global * fact, simb))
+        m1.metric("Valor Actual Cartera", formato_moneda(val_total_global * fact, simb), delta=formato_moneda(gan_total_global * fact, simb))
         m2.metric("Inversión Ajustada", formato_moneda(inv_total_global * fact, simb))
         m3.metric("Rendimiento Total (TIR)", f"{tir_global:.2f}%")
 
@@ -92,7 +92,13 @@ if df_raw is not None and not df_raw.empty:
 
         # 6. TABLA DE RESUMEN POR ACTIVO (CON FILA TOTAL)
         st.subheader("📊 Composición por Clase de Activo")
-        df_tipo = df.groupby('tipo_activo').agg({'costo_ajustado_ars':'sum','valor_hoy_ars':'sum','ganancia_ars':'sum'}).reset_index().sort_values(by='valor_hoy_ars', ascending=False)
+        df_tipo = df.groupby('tipo_activo').agg({
+            'costo_ajustado_ars': 'sum',
+            'valor_hoy_ars': 'sum',
+            'ganancia_ars': 'sum'
+        }).reset_index().sort_values(by='valor_hoy_ars', ascending=False)
         
         df_tipo_v = pd.DataFrame({
-            'Tipo': df_tipo['tipo_activo'].str.
+            'Tipo': df_tipo['tipo_activo'].str.upper(),
+            'Inversión': (df_tipo['costo_ajustado_ars'] * fact).apply(lambda x: formato_moneda(x, simb)),
+            'Valor Actual': (df_tipo['valor_hoy_
