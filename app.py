@@ -32,7 +32,7 @@ def load_data(url):
 st.title("🚀 Mi Portfolio de Inversiones")
 
 # --- REEMPLAZA ESTE LINK CON EL TUYO ---
-SHEET_URL = "TU_LINK_DE_GOOGLE_SHEETS_AQUI"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
 
 df_raw = load_data(SHEET_URL)
 mep_hoy = get_dolar_mep()
