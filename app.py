@@ -5,14 +5,19 @@ import plotly.express as px
 
 st.set_page_config(page_title="Terminal Inversiones Pro", layout="wide")
 
+# Función robusta de lectura
 def load_data(url):
-    # Esta es la forma más profesional de extraer el ID y exportar a CSV
     try:
+        # Extrae el ID de la hoja del link
         sheet_id = url.split("/d/")[1].split("/")[0]
+        # Forzamos la lectura de la primera hoja (export?format=csv)
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-        return pd.read_csv(csv_url)
+        df = pd.read_csv(csv_url)
+        # Limpieza de nombres de columnas para evitar errores de tipeo
+        df.columns = df.columns.str.strip().str.lower()
+        return df
     except Exception as e:
-        st.error("Error al extraer el ID de la hoja. Verifica el link.")
+        st.error(f"Error de conexión: {e}")
         return None
 
 st.title("🚀 Mi Portfolio de Inversiones")
@@ -20,45 +25,54 @@ st.title("🚀 Mi Portfolio de Inversiones")
 # CONFIGURACIÓN: PEGA TU LINK AQUÍ
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
 
-try:
-    df = load_data(SHEET_URL)
-    df['fecha'] = pd.to_datetime(df['fecha'])
-    
-    # 1. Obtener Precios en Tiempo Real
-    tickers = df['ticker'].unique().tolist()
-    data = yf.download(tickers, period="1d")['Close']
-    
-    # Si solo hay un ticker, yfinance devuelve un float, lo corregimos
-    if len(tickers) == 1:
-        precios_dict = {tickers[0]: data.iloc[-1]}
-    else:
-        precios_dict = data.iloc[-1].to_dict()
+df_raw = load_data(SHEET_URL)
 
-    # 2. Cálculos de Valorización
-    df['precio_actual'] = df['ticker'].map(precios_dict)
-    df['valor_actual'] = df['cantidad'] * df['precio_actual']
-    df['costo_total'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total']
-    df['rendimiento_usd'] = df['valor_actual'] - df['costo_total']
-    df['rendimiento_perc'] = (df['rendimiento_usd'] / df['costo_total']) * 100
+if df_raw is not None and not df_raw.empty:
+    try:
+        # Procesamiento de datos
+        df = df_raw.copy()
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        
+        # Obtener precios actuales
+        tickers = df['ticker'].unique().tolist()
+        with st.spinner('Actualizando precios de mercado...'):
+            precios_data = yf.download(tickers, period="1d")['Close']
+            
+        if len(tickers) == 1:
+            precios_dict = {tickers[0]: precios_data.iloc[-1]}
+        else:
+            precios_dict = precios_data.iloc[-1].to_dict()
 
-    # 3. DASHBOARD (UX de 1er Nivel)
-    col1, col2, col3 = st.columns(3)
-    total_invertido = df['costo_total'].sum()
-    valor_total = df['valor_actual'].sum()
-    ganancia_total = valor_total - total_invertido
-    
-    col1.metric("Inversión Total", f"USD {total_invertido:,.2f}")
-    col2.metric("Valor Actual", f"USD {valor_total:,.2f}", f"{ganancia_total:,.2f}")
-    col3.metric("Rendimiento Global", f"{(ganancia_total/total_invertido)*100:.2f}%")
+        # Cálculos Financieros
+        df['precio_actual'] = df['ticker'].map(precios_dict)
+        df['valor_actual'] = df['cantidad'] * df['precio_actual']
+        df['costo_total'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total'].fillna(0)
+        df['ganancia_abs'] = df['valor_actual'] - df['costo_total']
+        
+        # Dashboard Principal
+        total_inv = df['costo_total'].sum()
+        total_act = df['valor_actual'].sum()
+        rend_total = ((total_act / total_inv) - 1) * 100
 
-    # Gráfico de Torta (Composición)
-    fig_pie = px.pie(df, values='valor_actual', names='tipo_activo', title="Distribución por Activo")
-    st.plotly_chart(fig_pie, use_container_width=True)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Inversión Total", f"USD {total_inv:,.2f}")
+        m2.metric("Valor de Cartera", f"USD {total_act:,.2f}", f"{total_act-total_inv:,.2f}")
+        m3.metric("Rendimiento", f"{rend_total:.2f}%")
 
-    # Tabla Detallada
-    st.subheader("Detalle del Portafolio")
-    st.dataframe(df[['fecha', 'ticker', 'tipo_activo', 'cantidad', 'precio_unitario', 'precio_actual', 'rendimiento_perc']], use_container_width=True)
+        # Gráficos
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_pie = px.pie(df, values='valor_actual', names='tipo_activo', title="Distribución por Tipo")
+            st.plotly_chart(fig_pie, use_container_width=True)
+        with c2:
+            fig_bar = px.bar(df, x='ticker', y='ganancia_abs', color='ganancia_abs', 
+                             title="Ganancia/Pérdida por Activo", color_continuous_scale='RdYlGn')
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-except Exception as e:
-    st.warning("Carga algunos datos en tu Google Sheet para empezar a ver la magia.")
-    st.info("Asegúrate de que los Tickers sean correctos (ej: AAPL, BTC-USD).")
+        st.subheader("Detalle de Posiciones")
+        st.dataframe(df.style.format({'precio_unitario': '{:.2f}', 'precio_actual': '{:.2f}', 'ganancia_abs': '{:.2f}'}))
+
+    except Exception as e:
+        st.error(f"Error procesando datos: {e}")
+else:
+    st.info("Esperando datos válidos de Google Sheets...")
