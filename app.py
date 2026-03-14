@@ -6,8 +6,14 @@ import plotly.express as px
 st.set_page_config(page_title="Terminal Inversiones Pro", layout="wide")
 
 def load_data(url):
-    csv_url = url.replace('/edit?usp=sharing', '/export?format=csv')
-    return pd.read_csv(csv_url)
+    # Esta es la forma más profesional de extraer el ID y exportar a CSV
+    try:
+        sheet_id = url.split("/d/")[1].split("/")[0]
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+        return pd.read_csv(csv_url)
+    except Exception as e:
+        st.error("Error al extraer el ID de la hoja. Verifica el link.")
+        return None
 
 st.title("🚀 Mi Portfolio de Inversiones")
 
