@@ -63,12 +63,21 @@ if df_raw is not None and not df_raw.empty:
             fig_bar = px.bar(df, x='ticker', y='ganancia_abs', title="Ganancia por Activo")
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        # TABLA FINAL CORREGIDA
+        # TABLA FINAL ULTRA-ROBUSTA
         st.subheader("Detalle de Posiciones")
-        df_tab = df[['ticker', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].copy()
-        st.dataframe(df_tab.style.format(precision=2), use_container_width=True)
+        
+        # Mostramos la tabla sin formatos complejos para asegurar que cargue
+        df_display = df[['ticker', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].copy()
+        
+        # Redondeamos los números manualmente antes de mostrar
+        df_display = df_display.round(2)
+        
+        # Usamos st.dataframe normal (sin .style) que es el más estable
+        st.dataframe(df_display, use_container_width=True)
 
     except Exception as e:
         st.error(f"Error en cálculos: {e}")
+        # En caso de error, mostramos los datos crudos para diagnosticar
+        st.write("Datos procesados hasta el error:", df)
 else:
     st.info("💡 Consejo: Revisa que tu Google Sheet tenga datos y el link sea correcto.")
