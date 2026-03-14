@@ -69,8 +69,17 @@ if df_raw is not None and not df_raw.empty:
                              title="Ganancia/Pérdida por Activo", color_continuous_scale='RdYlGn')
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        st.subheader("Detalle de Posiciones")
-        st.dataframe(df.style.format({'precio_unitario': '{:.2f}', 'precio_actual': '{:.2f}', 'ganancia_abs': '{:.2f}'}))
+      st.subheader("Detalle de Posiciones")
+        
+        # Versión ultra-robusta de la tabla
+        df_display = df[['fecha', 'ticker', 'tipo_activo', 'cantidad', 'precio_unitario', 'precio_actual', 'ganancia_abs']].copy()
+        
+        # Convertimos a string con formato para evitar el error de Series.format
+        st.table(df_display.style.format({
+            'precio_unitario': '{:.2f}', 
+            'precio_actual': '{:.2f}', 
+            'ganancia_abs': '{:.2f}'
+        }))
 
     except Exception as e:
         st.error(f"Error procesando datos: {e}")
