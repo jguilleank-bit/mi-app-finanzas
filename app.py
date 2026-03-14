@@ -17,7 +17,7 @@ def get_dolar_mep():
         url = "https://criptoya.com/api/dolar"
         return float(requests.get(url).json()['mep']['al30']['ci']['price'])
     except:
-        return 1420.0  # Valor de referencia si falla la API
+        return 1400.0
 
 # Lector de Google Sheets
 def load_data(url):
@@ -30,13 +30,15 @@ def load_data(url):
     except:
         return None
 
-# Limpieza de números
+# Limpieza robusta de números para formato latino (coma decimal)
 def limpiar_numero(serie):
-    return serie.astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).apply(pd.to_numeric, errors='coerce').fillna(0)
+    serie = serie.astype(str).str.replace(r'[^\d,.-]', '', regex=True)
+    serie = serie.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+    return pd.to_numeric(serie, errors='coerce').fillna(0)
 
 st.title("🚀 Mi Portfolio de Inversiones")
 
-# --- REEMPLAZA CON TU LINK ---
+# Link de tu hoja ya integrado
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
 
 df_raw = load_data(SHEET_URL)
@@ -50,16 +52,16 @@ if df_raw is not None and not df_raw.empty:
         df = df_raw.copy()
         df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
         
-        # Limpieza de datos
+        # Limpieza de columnas clave
         df['cantidad'] = limpiar_numero(df['cantidad'])
         df['precio_unitario'] = limpiar_numero(df['precio_unitario'])
         df['comision_total'] = limpiar_numero(df.get('comision_total', pd.Series([0]*len(df))))
         df['cotizacion_mep_dia'] = limpiar_numero(df.get('cotizacion_mep_dia', pd.Series([mep_hoy]*len(df))))
         df['cotizacion_mep_dia'] = df['cotizacion_mep_dia'].replace(0, mep_hoy)
 
-        # Precios de Mercado
+        # Obtener precios de Yahoo Finance
         tickers = df['ticker'].unique().tolist()
-        with st.spinner('Actualizando precios de mercado...'):
+        with st.spinner('Actualizando precios...'):
             precios_dict = {}
             for t in tickers:
                 try:
@@ -68,36 +70,45 @@ if df_raw is not None and not df_raw.empty:
                 except:
                     precios_dict[t] = 0
 
-        # LÓGICA DE COSTOS
-        # 1. Costo Histórico: Lo que realmente pagaste (el valor de tu Excel)
-        df['costo_historico_ars'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total']
+        # CÁLCULOS
+        df['costo_total_ars'] = (df['cantidad'] * df['precio_unitario']) + df['comision_total']
+        df['costo_usd_compra'] = df['costo_total_ars'] / df['cotizacion_mep_dia']
+        df['costo_ajustado_mep_hoy'] = df['costo_usd_compra'] * mep_hoy
         
-        # 2. Costo Ajustado: Dolarizamos al valor de compra y traemos al dólar de hoy
-        df['costo_usd_compra'] = df['costo_historico_ars'] / df['cotizacion_mep_dia']
-        df['costo_ajustado_hoy'] = df['costo_usd_compra'] * mep_hoy
+        # Valor de mercado (si es .BA dividimos por MEP para estandarizar a USD y luego mostramos)
+        def calcular_valor_actual(row):
+            p = precios_dict.get(row['ticker'], 0)
+            valor_ars = p * row['cantidad']
+            return valor_ars # Yahoo Finance devuelve pesos para activos .BA
 
-        # 3. Valor Actual: Precio de mercado x Cantidad
-        df['valor_actual_total'] = df['ticker'].map(precios_dict) * df['cantidad']
-        
-        # 4. Ganancia Real: Diferencia contra el costo ajustado (no contra el histórico)
-        df['ganancia_real'] = df['valor_actual_total'] - df['costo_ajustado_hoy']
+        df['valor_actual_ars'] = df.apply(calcular_valor_actual, axis=1)
+        df['ganancia_real_ars'] = df['valor_actual_ars'] - df['costo_ajustado_mep_hoy']
 
-        # Selección de moneda para visualización
-        factor = 1.0 if moneda_view == "ARS (Pesos)" else (1/mep_hoy)
-        simbolo = "$" if moneda_view == "ARS (Pesos)" else "USD"
+        # Ajuste por moneda elegida
+        f = 1.0 if moneda_view == "ARS (Pesos)" else (1/mep_hoy)
+        s = "$" if moneda_view == "ARS (Pesos)" else "USD"
 
-        # TABLA FINAL
+        # Métricas principales
+        c1, c2, c3 = st.columns(3)
+        total_inv = df['costo_ajustado_mep_hoy'].sum() * f
+        total_mkt = df['valor_actual_ars'].sum() * f
+        c1.metric("Inversión Ajustada", f"{s} {formato_ars(total_inv)}")
+        c2.metric("Valor Cartera", f"{s} {formato_ars(total_mkt)}")
+        c3.metric("Rendimiento Real", f"{((total_mkt/total_inv)-1)*100:.2f}%" if total_inv > 0 else "0%")
+
+        # Tabla de Detalle
         st.subheader("Detalle de Posiciones")
-        df_display = pd.DataFrame({
-            'Fecha': df['fecha'].dt.strftime('%d-%m-%Y'),
+        df_tab = pd.DataFrame({
             'Ticker': df['ticker'],
             'Cant.': df['cantidad'],
-            'Costo Histórico': df['costo_historico_ars'] * factor,
-            'Costo Ajustado (Hoy)': df['costo_ajustado_hoy'] * factor,
-            'Valor Actual': df['valor_actual_total'] * factor,
-            'Ganancia Real': df['ganancia_real'] * factor
+            'Costo Histórico': (df['costo_total_ars'] * f).apply(lambda x: f"{s} {formato_ars(x)}"),
+            'Costo Ajustado': (df['costo_ajustado_mep_hoy'] * f).apply(lambda x: f"{s} {formato_ars(x)}"),
+            'Valor Actual': (df['valor_actual_ars'] * f).apply(lambda x: f"{s} {formato_ars(x)}"),
+            'Ganancia Real': (df['ganancia_real_ars'] * f).apply(lambda x: f"{s} {formato_ars(x)}")
         })
+        st.dataframe(df_tab, use_container_width=True)
 
-        # Aplicar formato de moneda para lectura fácil
-        for col in df_display.columns[3:]:
-            df_display[col] = df_display[col].apply(lambda x: f"{simbolo} {formato_
+    except Exception as e:
+        st.error(f"Error procesando datos: {e}")
+else:
+    st.warning("No se detectaron datos en la hoja de cálculo.")
