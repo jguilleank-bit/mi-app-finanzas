@@ -54,7 +54,6 @@ df_raw = load_data(SHEET_URL)
 if df_raw is not None and not df_raw.empty:
     try:
         df = df_raw.copy()
-        df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
         df['cantidad'] = df['cantidad'].apply(limpiar_precio)
         df['precio_unitario'] = df['precio_unitario'].apply(limpiar_precio)
         df['mep_compra'] = df['cotizacion_mep_dia'].apply(limpiar_precio).replace(0.0, mep_hoy)
@@ -62,7 +61,7 @@ if df_raw is not None and not df_raw.empty:
         # 3. PRECIOS EN VIVO
         tickers = df['ticker'].dropna().unique().tolist()
         precios_vivos_ars = {}
-        with st.spinner('Sincronizando mercado...'):
+        with st.spinner('Sincronizando con el mercado...'):
             for t in tickers:
                 try:
                     tkr = yf.Ticker(t)
@@ -73,25 +72,12 @@ if df_raw is not None and not df_raw.empty:
                     else: precios_vivos_ars[t] = 0.0
                 except: precios_vivos_ars[t] = 0.0
 
-        # 4. CÁLCULOS BASE
+        # 4. CÁLCULOS
         df['costo_ajustado_ars'] = (df['cantidad'] * df['precio_unitario'] / df['mep_compra']) * mep_hoy
         df['valor_hoy_ars'] = df.apply(lambda r: precios_vivos_ars.get(r['ticker'], 0) * r['cantidad'], axis=1)
         df['ganancia_ars'] = df['valor_hoy_ars'] - df['costo_ajustado_ars']
 
-        # 5. RESUMEN MACRO
-        inv_total_global = df['costo_ajustado_ars'].sum()
-        val_total_global = df['valor_hoy_ars'].sum()
-        gan_total_global = val_total_global - inv_total_global
-        tir_resumen = ((val_total_global / inv_total_global) - 1) * 100 if inv_total_global > 0 else 0
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Valor Total Cartera", formato_moneda(val_total_global * fact, simb), delta=formato_moneda(gan_total_global * fact, simb))
-        m2.metric("Inversión Ajustada", formato_moneda(inv_total_global * fact, simb))
-        m3.metric("Rendimiento (TIR)", f"{tir_resumen:.2f}%")
-
-        st.markdown("---")
-
-        # 6. TABLA DE RESUMEN POR ACTIVO (ORDENADA + TOTALES + TORTA)
+        # 5. TABLA SUPERIOR: RESUMEN POR CLASE DE ACTIVO
         st.subheader("📊 Composición por Clase de Activo")
         df_tipo = df.groupby('tipo_activo').agg({
             'costo_ajustado_ars': 'sum',
@@ -99,44 +85,52 @@ if df_raw is not None and not df_raw.empty:
             'ganancia_ars': 'sum'
         }).reset_index().sort_values(by='valor_hoy_ars', ascending=False)
         
-        col_tab, col_pie = st.columns([0.6, 0.4])
-        
-        with col_tab:
-            # Construcción de la tabla visual
-            df_tipo_v = pd.DataFrame({
-                'Tipo': df_tipo['tipo_activo'].str.upper(),
-                'Inversión': (df_tipo['costo_ajustado_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
-                'Valor Actual': (df_tipo['valor_hoy_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
-                'Ganancia': (df_tipo['ganancia_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
-                'Rend.': ((df_tipo['valor_hoy_ars']/df_tipo['costo_ajustado_ars']-1)*100).map("{:.1f}%".format)
-            })
-            
-            # Fila de Totales final
-            fila_total = pd.DataFrame({
-                'Tipo': ['TOTAL'],
-                'Inversión': [formato_moneda(inv_total_global * fact, simb)],
-                'Valor Actual': [formato_moneda(val_total_global * fact, simb)],
-                'Ganancia': [formato_moneda(gan_total_global * fact, simb)],
-                'Rend.': [f"{tir_resumen:.1f}%"]
-            })
-            
-            st.dataframe(pd.concat([df_tipo_v, fila_total], ignore_index=True), hide_index=True, use_container_width=True)
+        # Totales para la última fila
+        inv_t = df_tipo['costo_ajustado_ars'].sum()
+        val_t = df_tipo['valor_hoy_ars'].sum()
+        gan_t = df_tipo['ganancia_ars'].sum()
+        tir_t = ((val_t / inv_t) - 1) * 100 if inv_t > 0 else 0
 
-        with col_pie:
-            st.plotly_chart(px.pie(df_tipo, values='valor_hoy_ars', names='tipo_activo', hole=.5, title="Diversificación por Categoría"), use_container_width=True)
+        # Formateo de tabla
+        df_tipo_v = pd.DataFrame({
+            'Tipo': df_tipo['tipo_activo'].str.upper(),
+            'Inversión': (df_tipo['costo_ajustado_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
+            'Valor Actual': (df_tipo['valor_hoy_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
+            'Ganancia': (df_tipo['ganancia_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
+            'Rend.': ((df_tipo['valor_hoy_ars']/df_tipo['costo_ajustado_ars']-1)*100).map("{:.1f}%".format)
+        })
+        
+        fila_total = pd.DataFrame({
+            'Tipo': ['TOTAL'],
+            'Inversión': [formato_moneda(inv_t * fact, simb)],
+            'Valor Actual': [formato_moneda(val_t * fact, simb)],
+            'Ganancia': [formato_moneda(gan_t * fact, simb)],
+            'Rend.': [f"{tir_t:.1f}%"]
+        })
+        
+        st.dataframe(pd.concat([df_tipo_v, fila_total], ignore_index=True), hide_index=True, use_container_width=True)
 
         st.markdown("---")
 
-        # 7. DETALLE POR TICKER (GRÁFICOS RESTAURADOS)
-        st.subheader("🔍 Desglose por Instrumento")
-        df_tick = df.groupby('ticker').agg({'valor_hoy_ars':'sum', 'ganancia_ars':'sum'}).reset_index()
-        g1, g2 = st.columns(2)
-        with g1: 
-            st.plotly_chart(px.pie(df_tick, values='valor_hoy_ars', names='ticker', title="Peso de cada Activo", hole=.4), use_container_width=True)
-        with g2: 
-            st.plotly_chart(px.bar(df_tick.sort_values(by='ganancia_ars'), x='ticker', y=df_tick['ganancia_ars']*fact, color='ganancia_ars', 
-                                   title=f"Ganancia Absoluta ({simb})", color_continuous_scale='RdYlGn'), use_container_width=True)
+        # 6. GRÁFICOS INFERIORES: TORTA (IZQ) Y BARRAS BROKER (DER)
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.subheader("🍩 Distribución por Tipo")
+            fig_pie = px.pie(df_tipo, values='valor_hoy_ars', names='tipo_activo', hole=.5)
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with c2:
+            st.subheader("🏦 Capital por Broker")
+            # Agrupamos por broker (asegúrate que la columna se llame 'broker' en tu Excel)
+            df_broker = df.groupby('broker')['valor_hoy_ars'].sum().reset_index()
+            fig_bar = px.bar(df_broker, x='broker', y=df_broker['valor_hoy_ars']*fact, 
+                             text=(df_broker['valor_hoy_ars']*fact).apply(lambda x: formato_moneda(x, simb)),
+                             color='broker', labels={'y': f'Total ({simb})'})
+            fig_bar.update_traces(textposition='outside')
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-    except Exception as e: st.error(f"Error en el procesamiento: {e}")
+    except Exception as e:
+        st.error(f"Error en la ejecución: {e}")
 else:
-    st.info("Cargando datos desde la planilla...")
+    st.info("Conecta tu Google Sheet para ver el análisis por Broker.")
