@@ -15,7 +15,7 @@ def load_data(url):
 st.title("📊 Mi Dashboard de Inversiones")
 
 # Reemplaza esto con tu link copiado
-SHEET_URL = "TU_LINK_DE_GOOGLE_SHEETS_AQUI"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
 
 try:
     df = load_data(SHEET_URL)
