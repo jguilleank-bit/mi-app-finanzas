@@ -1,217 +1,108 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/app.py b/app.py
-index 1a5fd5440a3d020105a160a22241c02807a678f6..319669812600c4c01f6583405cb909030f3c0b2c 100644
---- a/app.py
-+++ b/app.py
-@@ -1,62 +1,165 @@
--import streamlit as st
-+#!/usr/bin/env python3
-+"""Streamlit portfolio app."""
-+
-+import unicodedata
-+
- import pandas as pd
--import yfinance as yf
- import plotly.express as px
- import requests
-+import streamlit as st
-+import yfinance as yf
- 
- st.set_page_config(page_title="Portfolio Pro", layout="wide")
- 
-+SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
-+
-+
- def fmt(v, s):
-     return f"{s} {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
- 
-+
- def clean(v):
--    return float(str(v).replace("$","").replace(".","").replace(",",".").strip() or 0)
-+    return float(str(v).replace("$", "").replace(".", "").replace(",", ".").strip() or 0)
-+
-+
-+def normalize_col(name):
-+    normalized = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("utf-8")
-+    return normalized.strip().lower().replace(" ", "_")
-+
-+
-+def parse_date_column(df):
-+    candidates = [c for c in df.columns if "fecha" in c]
-+    if not candidates:
-+        return pd.Series(pd.NaT, index=df.index)
-+
-+    for col in candidates:
-+        parsed = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
-+        if parsed.notna().any():
-+            return parsed
-+
-+    return pd.Series(pd.NaT, index=df.index)
-+
-+
-+def to_csv_export_url(sheet_url):
-+    marker = "/d/"
-+    if marker in sheet_url:
-+        sheet_id = sheet_url.split(marker, 1)[1].split("/", 1)[0]
-+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-+    return sheet_url
-+
- 
- @st.cache_data(ttl=600)
- def get_mep():
--    try: return float(requests.get("https://criptoya.com/api/dolar").json()['mep']['al30']['ci']['price'])
--    except: return 1400.0
-+    try:
-+        response = requests.get("https://criptoya.com/api/dolar", timeout=8)
-+        return float(response.json()["mep"]["al30"]["ci"]["price"])
-+    except Exception:
-+        return 1400.0
-+
- 
- st.title("🚀 Mi Portfolio")
- mep = get_mep()
- mon = st.sidebar.selectbox("Moneda", ["ARS", "USD"])
--s, f = ("$", 1.0) if mon == "ARS" else ("USD", 1.0/mep)
-+s, f = ("$", 1.0) if mon == "ARS" else ("USD", 1.0 / mep)
-+
-+url = to_csv_export_url(SHEET_URL)
- 
- try:
--    sid = "1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk"
--    df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv")
--    df.columns = df.columns.str.strip().str.lower()
--    for c in ['cantidad','precio_unitario','cotizacion_mep_dia']: df[c] = df[c].apply(clean)
--    
--    px_v = {}
--    for t in df['ticker'].unique():
--        try: px_v[t] = yf.Ticker(t).history(period="1d")['Close'].iloc[-1] * (1 if t.endswith(".BA") else mep)
--        except: px_v[t] = 0
--    
--    df['costo'] = (df['cantidad']*df['precio_unitario']/df['cotizacion_mep_dia'].replace(0,mep))*mep
--    df['hoy'] = df.apply(lambda r: px_v.get(r['ticker'],0)*r['cantidad'], axis=1)
--    df['gan'] = df['hoy'] - df['costo']
--
--    it, vt = df['costo'].sum(), df['hoy'].sum()
--    gt, tir = vt-it, ((vt/it)-1)*100 if it>0 else 0
--
--    c1, c2, c3 = st.columns(3)
--    c1.metric("Cartera", fmt(vt*f, s), fmt(gt*f, s))
--    c2.metric("Inversión", fmt(it*f, s))
--    c3.metric("TIR Total", f"{tir:.2f}%")
--
--    st.subheader("📊 Resumen")
--    dg = df.groupby('tipo_activo').agg({'costo':'sum','hoy':'sum','gan':'sum'}).reset_index()
--    vt_tab = pd.DataFrame({'Tipo':dg['tipo_activo'].str.upper(), 'Inversión':(dg['costo']*f).apply(lambda x: fmt(x,s)), 'Valor':(dg['hoy']*f).apply(lambda x: fmt(x,s)), 'Rend':((dg['hoy']/dg['costo']-1)*100).map("{:.1f}%".format)})
--    st.dataframe(pd.concat([vt_tab, pd.DataFrame({'Tipo':['TOTAL'],'Inversión':[fmt(it*f,s)],'Valor':[fmt(vt*f,s)],'Rend':[f"{tir:.1f}%"]})]), hide_index=True, use_container_width=True)
--
--    g1, g2 = st.columns(2)
--    g1.plotly_chart(px.pie(dg, values='hoy', names='tipo_activo', title="Tipos", hole=.5), use_container_width=True)
--    db = df.groupby('broker')['hoy'].sum().reset_index()
--    g2.plotly_chart(px.bar(db, x='broker', y=db['hoy']*f, color='broker', title="Broker"), use_container_width=True)
--
--    g3, g4 = st.columns(2)
--    dt = df.groupby('ticker').agg({'hoy':'sum','gan':'sum'}).reset_index()
--    g3.plotly_chart(px.pie(dt, values='hoy', names='ticker', title="Tickers", hole=.4), use_container_width=True)
--    g4.plotly_chart(px.bar(dt.sort_values('gan'), x='ticker', y=dt['gan']*f, color='gan', title="Ganancia/Pérdida", color_continuous_scale='RdYlGn'), use_container_width=True)
--except Exception as e: st.error("Error de datos")
-+    df = pd.read_csv(url)
-+except Exception:
-+    st.error("Error al leer la planilla de datos")
-+    st.stop()
-+
-+df.columns = [normalize_col(c) for c in df.columns]
-+
-+for needed in ["ticker", "cantidad", "precio_unitario", "cotizacion_mep_dia", "tipo_activo", "broker"]:
-+    if needed not in df.columns:
-+        df[needed] = 0 if needed in {"cantidad", "precio_unitario", "cotizacion_mep_dia"} else "Sin dato"
-+
-+for c in ["cantidad", "precio_unitario", "cotizacion_mep_dia"]:
-+    df[c] = df[c].apply(clean)
-+
-+px_v = {}
-+for t in df["ticker"].astype(str).unique():
-+    if not t or t.lower() == "nan":
-+        continue
-+    try:
-+        price = yf.Ticker(t).history(period="1d")["Close"].iloc[-1]
-+        px_v[t] = price * (1 if t.endswith(".BA") else mep)
-+    except Exception:
-+        px_v[t] = 0
-+
-+df["costo"] = (df["cantidad"] * df["precio_unitario"] / df["cotizacion_mep_dia"].replace(0, mep)) * mep
-+df["hoy"] = df.apply(lambda r: px_v.get(str(r["ticker"]), 0) * r["cantidad"], axis=1)
-+df["gan"] = df["hoy"] - df["costo"]
-+
-+df["fecha_operacion"] = parse_date_column(df)
-+dias = (pd.Timestamp.now().normalize() - df["fecha_operacion"]).dt.days.clip(lower=0)
-+
-+it, vt = df["costo"].sum(), df["hoy"].sum()
-+gt = vt - it
-+retorno_total = (vt / it) - 1 if it > 0 else 0
-+tir = retorno_total * 100
-+
-+mask_valid_days = df["fecha_operacion"].notna() & (df["costo"] > 0)
-+if mask_valid_days.any():
-+    promedio_dias = (dias[mask_valid_days] * df.loc[mask_valid_days, "costo"]).sum() / df.loc[mask_valid_days, "costo"].sum()
-+else:
-+    promedio_dias = 0
-+
-+tir_anual = ((1 + retorno_total) ** (365 / promedio_dias) - 1) * 100 if promedio_dias > 0 and (1 + retorno_total) > 0 else 0
-+
-+c1, c2, c3, c4, c5 = st.columns(5)
-+c1.metric("Inversión", fmt(it * f, s))
-+c2.metric("Cartera", fmt(vt * f, s), fmt(gt * f, s))
-+c3.metric("TIR Total", f"{tir:.2f}%")
-+c4.metric("TIR Anual", f"{tir_anual:.2f}%")
-+c5.metric("Promedio días", f"{promedio_dias:.0f} días" if promedio_dias > 0 else "N/D")
-+
-+st.subheader("📊 Resumen")
-+dg = df.groupby("tipo_activo").agg({"costo": "sum", "hoy": "sum", "gan": "sum"}).reset_index()
-+vt_tab = pd.DataFrame(
-+    {
-+        "Tipo": dg["tipo_activo"].astype(str).str.upper(),
-+        "Inversión": (dg["costo"] * f).apply(lambda x: fmt(x, s)),
-+        "Valor": (dg["hoy"] * f).apply(lambda x: fmt(x, s)),
-+        "Rend": ((dg["hoy"] / dg["costo"].replace(0, pd.NA) - 1) * 100).fillna(0).map("{:.1f}%".format),
-+    }
-+)
-+st.dataframe(
-+    pd.concat(
-+        [
-+            vt_tab,
-+            pd.DataFrame(
-+                {
-+                    "Tipo": ["TOTAL"],
-+                    "Inversión": [fmt(it * f, s)],
-+                    "Valor": [fmt(vt * f, s)],
-+                    "Rend": [f"{tir:.1f}%"],
-+                }
-+            ),
-+        ]
-+    ),
-+    hide_index=True,
-+    use_container_width=True,
-+)
-+
-+g1, g2 = st.columns(2)
-+g1.plotly_chart(px.pie(dg, values="hoy", names="tipo_activo", title="Tipos", hole=0.5), use_container_width=True)
-+db = df.groupby("broker")["hoy"].sum().reset_index()
-+g2.plotly_chart(px.bar(db, x="broker", y=db["hoy"] * f, color="broker", title="Broker"), use_container_width=True)
-+
-+g3, g4 = st.columns(2)
-+dt = df.groupby("ticker").agg({"hoy": "sum", "gan": "sum"}).reset_index()
-+g3.plotly_chart(px.pie(dt, values="hoy", names="ticker", title="Tickers", hole=0.4), use_container_width=True)
-+g4.plotly_chart(
-+    px.bar(
-+        dt.sort_values("gan"),
-+        x="ticker",
-+        y=dt["gan"] * f,
-+        color="gan",
-+        title="Ganancia/Pérdida",
-+        color_continuous_scale="RdYlGn",
-+    ),
-+    use_container_width=True,
-+)
- 
-EOF
-)
+1	#!/usr/bin/env python3
+     2	"""App mínima de portfolio en Streamlit usando Google Sheets."""
+     3	
+     4	import pandas as pd
+     5	import requests
+     6	import streamlit as st
+     7	import yfinance as yf
+     8	
+     9	st.set_page_config(page_title="Mi Portfolio", layout="wide")
+    10	
+    11	SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
+    12	
+    13	
+    14	def to_csv_export_url(sheet_url: str) -> str:
+    15	    """Convierte URL de edición de Google Sheets a URL CSV exportable."""
+    16	    marker = "/d/"
+    17	    if marker not in sheet_url:
+    18	        return sheet_url
+    19	    sheet_id = sheet_url.split(marker, 1)[1].split("/", 1)[0]
+    20	    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    21	
+    22	
+    23	def fmt_money(value: float, symbol: str) -> str:
+    24	    return f"{symbol} {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    25	
+    26	
+    27	def parse_number(v) -> float:
+    28	    """Soporta números estilo ARS: 1.234,56"""
+    29	    text = str(v).replace("$", "").strip()
+    30	    if not text or text.lower() == "nan":
+    31	        return 0.0
+    32	    text = text.replace(".", "").replace(",", ".")
+    33	    try:
+    34	        return float(text)
+    35	    except Exception:
+    36	        return 0.0
+    37	
+    38	
+    39	@st.cache_data(ttl=600)
+    40	def get_mep() -> float:
+    41	    try:
+    42	        r = requests.get("https://criptoya.com/api/dolar", timeout=8)
+    43	        return float(r.json()["mep"]["al30"]["ci"]["price"])
+    44	    except Exception:
+    45	        return 1400.0
+    46	
+    47	
+    48	st.title("🚀 Mi Portfolio")
+    49	mep = get_mep()
+    50	currency = st.sidebar.selectbox("Moneda", ["ARS", "USD"])
+    51	symbol, fx = ("$", 1.0) if currency == "ARS" else ("USD", 1.0 / mep)
+    52	
+    53	url = to_csv_export_url(SHEET_URL)
+    54	
+    55	try:
+    56	    df = pd.read_csv(url)
+    57	except Exception:
+    58	    st.error("No se pudo leer la planilla. Revisá permisos de Google Sheets.")
+    59	    st.stop()
+    60	
+    61	# Normaliza nombres de columnas
+    62	cols = {c: str(c).strip().lower().replace(" ", "_") for c in df.columns}
+    63	df = df.rename(columns=cols)
+    64	
+    65	# Columnas mínimas esperadas
+    66	required = ["ticker", "cantidad", "precio_unitario", "cotizacion_mep_dia"]
+    67	for c in required:
+    68	    if c not in df.columns:
+    69	        st.error(f"Falta columna requerida en la planilla: {c}")
+    70	        st.stop()
+    71	
+    72	# Limpieza numérica
+    73	for c in ["cantidad", "precio_unitario", "cotizacion_mep_dia"]:
+    74	    df[c] = df[c].apply(parse_number)
+    75	
+    76	# Precio actual por ticker
+    77	prices = {}
+    78	for t in df["ticker"].astype(str).str.strip().unique():
+    79	    if not t:
+    80	        continue
+    81	    try:
+    82	        close = yf.Ticker(t).history(period="1d")["Close"].iloc[-1]
+    83	        prices[t] = float(close) * (1 if t.endswith(".BA") else mep)
+    84	    except Exception:
+    85	        prices[t] = 0.0
+    86	
+    87	# Cálculos base
+    88	cmepsafe = df["cotizacion_mep_dia"].replace(0, mep)
+    89	df["costo"] = (df["cantidad"] * df["precio_unitario"] / cmepsafe) * mep
+    90	df["hoy"] = df.apply(lambda r: prices.get(str(r["ticker"]).strip(), 0.0) * r["cantidad"], axis=1)
+    91	df["ganancia"] = df["hoy"] - df["costo"]
+    92	
+    93	inversion = float(df["costo"].sum())
+    94	cartera = float(df["hoy"].sum())
+    95	ganancia = cartera - inversion
+    96	tir_total = ((cartera / inversion) - 1) * 100 if inversion > 0 else 0.0
+    97	
+    98	# Orden solicitado: Inversión -> Cartera -> TIR
+    99	c1, c2, c3 = st.columns(3)
+   100	c1.metric("Inversión", fmt_money(inversion * fx, symbol))
+   101	c2.metric("Cartera", fmt_money(cartera * fx, symbol), fmt_money(ganancia * fx, symbol))
+   102	c3.metric("TIR Total", f"{tir_total:.2f}%")
+   103	
+   104	st.subheader("Detalle")
+   105	show = df[["ticker", "cantidad", "precio_unitario", "costo", "hoy", "ganancia"]].copy()
+   106	for c in ["precio_unitario", "costo", "hoy", "ganancia"]:
+   107	    show[c] = show[c] * fx
+   108	st.dataframe(show, use_container_width=True, hide_index=True)
