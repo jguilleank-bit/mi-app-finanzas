@@ -260,3 +260,40 @@ tabla_pos = pd.DataFrame(
 )
 
 st.dataframe(tabla_pos.sort_values("Ticker"), use_container_width=True, hide_index=True)
+
+# Gráfico de ganancia mensual (últimos 12 meses) + promedio
+st.subheader("Ganancia mensual (últimos 12 meses)")
+
+base_mensual = df_ticker.copy()
+base_mensual["mes"] = pd.to_datetime(base_mensual["fecha_inicio"], errors="coerce").dt.to_period("M")
+serie_mensual = base_mensual.groupby("mes", dropna=True)["ganancia"].sum()
+
+meses_12 = pd.period_range(end=pd.Timestamp.now().to_period("M"), periods=12, freq="M")
+serie_mensual = serie_mensual.reindex(meses_12, fill_value=0.0)
+
+mensual_df = pd.DataFrame(
+    {
+        "Mes": [m.to_timestamp() for m in meses_12],
+        "Ganancia": serie_mensual.values * fx,
+    }
+)
+mensual_df["Promedio 12m"] = mensual_df["Ganancia"].mean()
+mensual_df["Etiqueta"] = mensual_df["Mes"].dt.strftime("%Y-%m")
+
+fig_mensual = px.line(
+    mensual_df,
+    x="Etiqueta",
+    y="Ganancia",
+    markers=True,
+    title="Ganancia mensual y promedio (12 meses)",
+    labels={"Etiqueta": "Mes", "Ganancia": f"Ganancia ({symbol})"},
+)
+fig_mensual.add_scatter(
+    x=mensual_df["Etiqueta"],
+    y=mensual_df["Promedio 12m"],
+    mode="lines",
+    name="Promedio 12 meses",
+    line={"dash": "dash"},
+)
+
+st.plotly_chart(fig_mensual, use_container_width=True)
