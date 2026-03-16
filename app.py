@@ -1,4 +1,3 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
 index 1a5fd5440a3d020105a160a22241c02807a678f6..13e45ff64a53bdc2a2fb75696cf519e5734d72b8 100644
 --- a/app.py
@@ -187,6 +186,3 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..13e45ff64a53bdc2a2fb75696cf519e5
 +for c in ["precio_unitario", "costo", "hoy", "ganancia"]:
 +    show[c] = show[c] * fx
 +st.dataframe(show, use_container_width=True, hide_index=True)
- 
-EOF
-)
