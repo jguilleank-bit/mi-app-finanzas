@@ -25,6 +25,10 @@ def fmt_money(value: float, symbol: str) -> str:
     return f"{symbol} {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def fmt_number(value: float) -> str:
+    return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def parse_number(v) -> float:
     """Soporta números estilo ARS: 1.234,56."""
     text = str(v).replace("$", "").strip()
@@ -154,16 +158,17 @@ left.plotly_chart(
 
 df_broker = df.groupby("broker", dropna=False).agg(cartera=("hoy", "sum")).reset_index()
 df_broker["broker"] = df_broker["broker"].astype(str)
-right.plotly_chart(
-    px.bar(
-        df_broker,
-        x="broker",
-        y="cartera",
-        title="Cartera por broker",
-        color="broker",
-    ),
-    use_container_width=True,
+df_broker["etiqueta"] = (df_broker["cartera"] * fx).apply(fmt_number)
+fig_broker = px.bar(
+    df_broker,
+    x="broker",
+    y="cartera",
+    title="Cartera por broker",
+    color="broker",
+    text="etiqueta",
 )
+fig_broker.update_traces(textposition="outside")
+right.plotly_chart(fig_broker, use_container_width=True)
 
 # Tabla resumen debajo de los 2 gráficos superiores
 st.subheader("Resumen por tipo de activo")
@@ -171,13 +176,14 @@ dias_tipo = (pd.Timestamp.now().normalize() - df_tipo["fecha_inicio"]).dt.days
 ret_tipo = (df_tipo["cartera"] / df_tipo["inversion"].replace(0, pd.NA) - 1).fillna(0)
 df_tipo["tir_anual"] = [annualize_return(ret, d if pd.notna(d) and d > 0 else 0) for ret, d in zip(ret_tipo, dias_tipo)]
 
+tabla_tipo_num = df_tipo.sort_values("cartera", ascending=False).copy()
 tabla_tipo = pd.DataFrame(
     {
-        "Tipo de activo": df_tipo["tipo_activo"],
-        "Inversión": (df_tipo["inversion"] * fx).apply(lambda v: fmt_money(v, symbol)),
-        "Cartera": (df_tipo["cartera"] * fx).apply(lambda v: fmt_money(v, symbol)),
-        "Ganancia": (df_tipo["ganancia"] * fx).apply(lambda v: fmt_money(v, symbol)),
-        "TIR anual": df_tipo["tir_anual"].map(lambda x: f"{x:.2f}%"),
+        "Tipo de activo": tabla_tipo_num["tipo_activo"],
+        "Inversión": (tabla_tipo_num["inversion"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Cartera": (tabla_tipo_num["cartera"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Ganancia": (tabla_tipo_num["ganancia"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "TIR anual": tabla_tipo_num["tir_anual"].map(lambda x: f"{x:.2f}%"),
     }
 )
 
@@ -193,7 +199,7 @@ fila_total = pd.DataFrame(
     ]
 )
 
-st.dataframe(pd.concat([tabla_tipo.sort_values("Tipo de activo"), fila_total], ignore_index=True), use_container_width=True, hide_index=True)
+st.dataframe(pd.concat([tabla_tipo, fila_total], ignore_index=True), use_container_width=True, hide_index=True)
 
 # Gráficos 2: cartera/ganancia por ticker
 left2, right2 = st.columns(2)
@@ -222,17 +228,19 @@ left2.plotly_chart(
     use_container_width=True,
 )
 
-right2.plotly_chart(
-    px.bar(
-        df_ticker.sort_values("ganancia"),
-        x="ticker",
-        y="ganancia",
-        color="ganancia",
-        title="Ganancia por ticker",
-        color_continuous_scale="RdYlGn",
-    ),
-    use_container_width=True,
+df_ticker_plot = df_ticker.sort_values("ganancia").copy()
+df_ticker_plot["etiqueta"] = (df_ticker_plot["ganancia"] * fx).apply(fmt_number)
+fig_gan_ticker = px.bar(
+    df_ticker_plot,
+    x="ticker",
+    y="ganancia",
+    color="ganancia",
+    title="Ganancia por ticker",
+    color_continuous_scale="RdYlGn",
+    text="etiqueta",
 )
+fig_gan_ticker.update_traces(textposition="outside")
+right2.plotly_chart(fig_gan_ticker, use_container_width=True)
 
 # Tabla de posiciones solicitada
 st.subheader("Mis posiciones")
