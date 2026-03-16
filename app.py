@@ -47,9 +47,9 @@ def parse_date_column(df: pd.DataFrame) -> pd.Series:
     return pd.Series(pd.NaT, index=df.index)
 
 
-def annualize_return(ret_total: float, avg_days: float) -> float:
-    if avg_days > 0 and (1 + ret_total) > 0:
-        return ((1 + ret_total) ** (365 / avg_days) - 1) * 100
+def annualize_return(ret_total: float, days_invested: float) -> float:
+    if days_invested > 0 and (1 + ret_total) > 0:
+        return ((1 + ret_total) ** (365 / days_invested) - 1) * 100
     return 0.0
 
 
@@ -85,7 +85,7 @@ for c in required:
         st.error(f"Falta columna requerida en la planilla: {c}")
         st.stop()
 
-# Columnas para resumen/gráficos
+# Columnas para gráficos
 if "tipo_activo" not in df.columns:
     df["tipo_activo"] = "Sin dato"
 if "broker" not in df.columns:
@@ -111,6 +111,7 @@ df["costo"] = (df["cantidad"] * df["precio_unitario"] / df["cotizacion_mep_dia"]
 df["hoy"] = df.apply(lambda r: prices.get(str(r["ticker"]).strip(), 0.0) * r["cantidad"], axis=1)
 df["ganancia"] = df["hoy"] - df["costo"]
 df["fecha_operacion"] = parse_date_column(df)
+
 dias = (pd.Timestamp.now().normalize() - df["fecha_operacion"]).dt.days
 
 inversion = float(df["costo"].sum())
@@ -118,79 +119,110 @@ cartera = float(df["hoy"].sum())
 ganancia = cartera - inversion
 retorno_total = (cartera / inversion) - 1 if inversion > 0 else 0.0
 
-validos = df["fecha_operacion"].notna() & (df["costo"] > 0) & dias.notna() & (dias >= 0)
-if validos.any():
-    tiempo_promedio_dias = float((dias[validos] * df.loc[validos, "costo"]).sum() / df.loc[validos, "costo"].sum())
+# Tiempo de inversión total de la cartera (no promedio): desde la fecha más antigua
+mask_fechas = df["fecha_operacion"].notna()
+if mask_fechas.any():
+    dias_cartera = float((pd.Timestamp.now().normalize() - df.loc[mask_fechas, "fecha_operacion"].min()).days)
 else:
-    tiempo_promedio_dias = 0.0
+    dias_cartera = 0.0
 
-rendimiento_anual = annualize_return(retorno_total, tiempo_promedio_dias)
+anios_cartera = dias_cartera / 365 if dias_cartera > 0 else 0.0
+rendimiento_anual = annualize_return(retorno_total, dias_cartera)
 
-# Orden solicitado: Inversión -> Cartera -> Rendimiento anual -> Tiempo promedio
+# Métricas
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Inversión", fmt_money(inversion * fx, symbol))
 c2.metric("Cartera", fmt_money(cartera * fx, symbol), fmt_money(ganancia * fx, symbol))
 c3.metric("Rendimiento anual", f"{rendimiento_anual:.2f}%")
-c4.metric("Tiempo promedio inversión", f"{tiempo_promedio_dias:.0f} días" if tiempo_promedio_dias > 0 else "N/D")
+c4.metric("Tiempo inversión cartera", f"{anios_cartera:.2f} años" if anios_cartera > 0 else "N/D")
 
-# Gráficos solicitados
+# Gráficos 1: cartera por tipo de activo / broker
 left, right = st.columns(2)
 
-df_tipo = df.groupby("tipo_activo", dropna=False).agg(inversion=("costo", "sum"), cartera=("hoy", "sum"), ganancia=("ganancia", "sum")).reset_index()
+df_tipo = df.groupby("tipo_activo", dropna=False).agg(cartera=("hoy", "sum")).reset_index()
 df_tipo["tipo_activo"] = df_tipo["tipo_activo"].astype(str)
-
 left.plotly_chart(
     px.pie(
         df_tipo,
-        values="inversion",
+        values="cartera",
         names="tipo_activo",
-        title="Porcentaje de inversión por tipo de activo",
+        title="% de la cartera por tipo de activo",
         hole=0.45,
     ),
     use_container_width=True,
 )
 
-df_broker = df.groupby("broker", dropna=False).agg(inversion=("costo", "sum")).reset_index()
+df_broker = df.groupby("broker", dropna=False).agg(cartera=("hoy", "sum")).reset_index()
 df_broker["broker"] = df_broker["broker"].astype(str)
 right.plotly_chart(
     px.bar(
         df_broker,
         x="broker",
-        y="inversion",
-        title="Inversión por broker",
+        y="cartera",
+        title="Cartera por broker",
         color="broker",
     ),
     use_container_width=True,
 )
 
-# Tabla resumen solicitada
-st.subheader("Resumen por tipo de activo")
+# Gráficos 2: cartera/ganancia por ticker
+left2, right2 = st.columns(2)
 
-rows = []
-for tipo, dft in df.groupby("tipo_activo", dropna=False):
-    inv_t = float(dft["costo"].sum())
-    car_t = float(dft["hoy"].sum())
-    gan_t = car_t - inv_t
-    ret_t = (car_t / inv_t) - 1 if inv_t > 0 else 0.0
-
-    dias_t = (pd.Timestamp.now().normalize() - dft["fecha_operacion"]).dt.days
-    mask_t = dft["fecha_operacion"].notna() & (dft["costo"] > 0) & dias_t.notna() & (dias_t >= 0)
-    if mask_t.any():
-        prom_dias_t = float((dias_t[mask_t] * dft.loc[mask_t, "costo"]).sum() / dft.loc[mask_t, "costo"].sum())
-    else:
-        prom_dias_t = 0.0
-
-    tir_anual_t = annualize_return(ret_t, prom_dias_t)
-
-    rows.append(
-        {
-            "Tipo de activo": str(tipo),
-            "Cartera": fmt_money(car_t * fx, symbol),
-            "Inversión": fmt_money(inv_t * fx, symbol),
-            "Ganancia": fmt_money(gan_t * fx, symbol),
-            "TIR anual": f"{tir_anual_t:.2f}%",
-        }
+df_ticker = (
+    df.groupby("ticker", dropna=False)
+    .agg(
+        cantidad=("cantidad", "sum"),
+        costo=("costo", "sum"),
+        cartera=("hoy", "sum"),
+        ganancia=("ganancia", "sum"),
+        fecha_inicio=("fecha_operacion", "min"),
     )
+    .reset_index()
+)
 
-resumen_df = pd.DataFrame(rows).sort_values("Tipo de activo")
-st.dataframe(resumen_df, use_container_width=True, hide_index=True)
+df_ticker["ticker"] = df_ticker["ticker"].astype(str)
+left2.plotly_chart(
+    px.pie(
+        df_ticker,
+        values="cartera",
+        names="ticker",
+        title="% de la cartera por ticker",
+        hole=0.45,
+    ),
+    use_container_width=True,
+)
+
+right2.plotly_chart(
+    px.bar(
+        df_ticker.sort_values("ganancia"),
+        x="ticker",
+        y="ganancia",
+        color="ganancia",
+        title="Ganancia por ticker",
+        color_continuous_scale="RdYlGn",
+    ),
+    use_container_width=True,
+)
+
+# Tabla de posiciones solicitada
+st.subheader("Mis posiciones")
+
+dias_ticker = (pd.Timestamp.now().normalize() - df_ticker["fecha_inicio"]).dt.days
+meses_ticker = (dias_ticker / 30.44).fillna(0)
+
+df_ticker["precio_promedio"] = (df_ticker["costo"] / df_ticker["cantidad"].replace(0, pd.NA)).fillna(0)
+retorno_ticker = (df_ticker["cartera"] / df_ticker["costo"].replace(0, pd.NA) - 1).fillna(0)
+df_ticker["tir_anual"] = [annualize_return(ret, d if d > 0 else 0) for ret, d in zip(retorno_ticker, dias_ticker.fillna(0))]
+
+tabla_pos = pd.DataFrame(
+    {
+        "Ticker": df_ticker["ticker"],
+        "Cantidad": df_ticker["cantidad"].map(lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        "Precio promedio": (df_ticker["precio_promedio"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Ganancia": (df_ticker["ganancia"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Tiempo (meses)": meses_ticker.map(lambda x: f"{x:.1f}"),
+        "TIR anual": df_ticker["tir_anual"].map(lambda x: f"{x:.2f}%"),
+    }
+)
+
+st.dataframe(tabla_pos.sort_values("Ticker"), use_container_width=True, hide_index=True)
