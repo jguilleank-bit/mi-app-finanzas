@@ -241,7 +241,9 @@ dias_ticker = (pd.Timestamp.now().normalize() - df_ticker["fecha_inicio"]).dt.da
 meses_ticker = (dias_ticker / 30.44).fillna(0)
 
 df_ticker["precio_promedio"] = (df_ticker["costo"] / df_ticker["cantidad"].replace(0, pd.NA)).fillna(0)
+df_ticker["precio_actual"] = (df_ticker["cartera"] / df_ticker["cantidad"].replace(0, pd.NA)).fillna(0)
 retorno_ticker = (df_ticker["cartera"] / df_ticker["costo"].replace(0, pd.NA) - 1).fillna(0)
+df_ticker["ganancia_pct"] = (retorno_ticker * 100).fillna(0)
 df_ticker["tir_anual"] = [annualize_return(ret, d if d > 0 else 0) for ret, d in zip(retorno_ticker, dias_ticker.fillna(0))]
 
 tabla_pos = pd.DataFrame(
@@ -249,7 +251,9 @@ tabla_pos = pd.DataFrame(
         "Ticker": df_ticker["ticker"],
         "Cantidad": df_ticker["cantidad"].map(lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
         "Precio promedio": (df_ticker["precio_promedio"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Precio actual": (df_ticker["precio_actual"] * fx).apply(lambda v: fmt_money(v, symbol)),
         "Ganancia": (df_ticker["ganancia"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "% ganancia": df_ticker["ganancia_pct"].map(lambda x: f"{x:.2f}%"),
         "Tiempo (meses)": meses_ticker.map(lambda x: f"{x:.1f}"),
         "TIR anual": df_ticker["tir_anual"].map(lambda x: f"{x:.2f}%"),
     }
