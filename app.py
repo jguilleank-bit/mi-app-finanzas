@@ -1,11 +1,12 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
-index 1a5fd5440a3d020105a160a22241c02807a678f6..9670c6eb8ee86300c5519723fffb033fbd8e81c9 100644
+index 1a5fd5440a3d020105a160a22241c02807a678f6..319669812600c4c01f6583405cb909030f3c0b2c 100644
 --- a/app.py
 +++ b/app.py
-@@ -1,62 +1,162 @@
+@@ -1,62 +1,165 @@
 -import streamlit as st
-+"""Aplicación Streamlit de portfolio financiero."""
++#!/usr/bin/env python3
++"""Streamlit portfolio app."""
 +
 +import unicodedata
 +
@@ -31,8 +32,8 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..9670c6eb8ee86300c5519723fffb033f
 +
 +
 +def normalize_col(name):
-+    s = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("utf-8")
-+    return s.strip().lower().replace(" ", "_")
++    normalized = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("utf-8")
++    return normalized.strip().lower().replace(" ", "_")
 +
 +
 +def parse_date_column(df):
@@ -61,8 +62,9 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..9670c6eb8ee86300c5519723fffb033f
 -    try: return float(requests.get("https://criptoya.com/api/dolar").json()['mep']['al30']['ci']['price'])
 -    except: return 1400.0
 +    try:
-+        return float(requests.get("https://criptoya.com/api/dolar", timeout=8).json()["mep"]["al30"]["ci"]["price"])
-+    except:
++        response = requests.get("https://criptoya.com/api/dolar", timeout=8)
++        return float(response.json()["mep"]["al30"]["ci"]["price"])
++    except Exception:
 +        return 1400.0
 +
  
@@ -131,8 +133,9 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..9670c6eb8ee86300c5519723fffb033f
 +    if not t or t.lower() == "nan":
 +        continue
 +    try:
-+        px_v[t] = yf.Ticker(t).history(period="1d")["Close"].iloc[-1] * (1 if t.endswith(".BA") else mep)
-+    except:
++        price = yf.Ticker(t).history(period="1d")["Close"].iloc[-1]
++        px_v[t] = price * (1 if t.endswith(".BA") else mep)
++    except Exception:
 +        px_v[t] = 0
 +
 +df["costo"] = (df["cantidad"] * df["precio_unitario"] / df["cotizacion_mep_dia"].replace(0, mep)) * mep
