@@ -1,10 +1,7 @@
-import streamlit as st
 #!/usr/bin/env python3
 """App mínima de portfolio en Streamlit usando Google Sheets."""
 
 import pandas as pd
-import yfinance as yf
-import plotly.express as px
 import requests
 import streamlit as st
 import yfinance as yf
@@ -38,10 +35,7 @@ def parse_number(v) -> float:
     except Exception:
         return 0.0
 
-st.set_page_config(page_title="Portfolio Pro", layout="wide")
 
-def fmt(v, s):
-    return f"{s} {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 def parse_date_column(df: pd.DataFrame) -> pd.Series:
     """Busca una columna con 'fecha' y la convierte a datetime."""
     for col in df.columns:
@@ -51,13 +45,8 @@ def parse_date_column(df: pd.DataFrame) -> pd.Series:
                 return parsed
     return pd.Series(pd.NaT, index=df.index)
 
-def clean(v):
-    return float(str(v).replace("$","").replace(".","").replace(",",".").strip() or 0)
 
 @st.cache_data(ttl=600)
-def get_mep():
-    try: return float(requests.get("https://criptoya.com/api/dolar").json()['mep']['al30']['ci']['price'])
-    except: return 1400.0
 def get_mep() -> float:
     try:
         r = requests.get("https://criptoya.com/api/dolar", timeout=8)
@@ -68,51 +57,12 @@ def get_mep() -> float:
 
 st.title("🚀 Mi Portfolio")
 mep = get_mep()
-mon = st.sidebar.selectbox("Moneda", ["ARS", "USD"])
-s, f = ("$", 1.0) if mon == "ARS" else ("USD", 1.0/mep)
 currency = st.sidebar.selectbox("Moneda", ["ARS", "USD"])
 symbol, fx = ("$", 1.0) if currency == "ARS" else ("USD", 1.0 / mep)
 
 url = to_csv_export_url(SHEET_URL)
 
 try:
-    sid = "1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk"
-    df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv")
-    df.columns = df.columns.str.strip().str.lower()
-    for c in ['cantidad','precio_unitario','cotizacion_mep_dia']: df[c] = df[c].apply(clean)
-    
-    px_v = {}
-    for t in df['ticker'].unique():
-        try: px_v[t] = yf.Ticker(t).history(period="1d")['Close'].iloc[-1] * (1 if t.endswith(".BA") else mep)
-        except: px_v[t] = 0
-    
-    df['costo'] = (df['cantidad']*df['precio_unitario']/df['cotizacion_mep_dia'].replace(0,mep))*mep
-    df['hoy'] = df.apply(lambda r: px_v.get(r['ticker'],0)*r['cantidad'], axis=1)
-    df['gan'] = df['hoy'] - df['costo']
-
-    it, vt = df['costo'].sum(), df['hoy'].sum()
-    gt, tir = vt-it, ((vt/it)-1)*100 if it>0 else 0
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Cartera", fmt(vt*f, s), fmt(gt*f, s))
-    c2.metric("Inversión", fmt(it*f, s))
-    c3.metric("TIR Total", f"{tir:.2f}%")
-
-    st.subheader("📊 Resumen")
-    dg = df.groupby('tipo_activo').agg({'costo':'sum','hoy':'sum','gan':'sum'}).reset_index()
-    vt_tab = pd.DataFrame({'Tipo':dg['tipo_activo'].str.upper(), 'Inversión':(dg['costo']*f).apply(lambda x: fmt(x,s)), 'Valor':(dg['hoy']*f).apply(lambda x: fmt(x,s)), 'Rend':((dg['hoy']/dg['costo']-1)*100).map("{:.1f}%".format)})
-    st.dataframe(pd.concat([vt_tab, pd.DataFrame({'Tipo':['TOTAL'],'Inversión':[fmt(it*f,s)],'Valor':[fmt(vt*f,s)],'Rend':[f"{tir:.1f}%"]})]), hide_index=True, use_container_width=True)
-
-    g1, g2 = st.columns(2)
-    g1.plotly_chart(px.pie(dg, values='hoy', names='tipo_activo', title="Tipos", hole=.5), use_container_width=True)
-    db = df.groupby('broker')['hoy'].sum().reset_index()
-    g2.plotly_chart(px.bar(db, x='broker', y=db['hoy']*f, color='broker', title="Broker"), use_container_width=True)
-
-    g3, g4 = st.columns(2)
-    dt = df.groupby('ticker').agg({'hoy':'sum','gan':'sum'}).reset_index()
-    g3.plotly_chart(px.pie(dt, values='hoy', names='ticker', title="Tickers", hole=.4), use_container_width=True)
-    g4.plotly_chart(px.bar(dt.sort_values('gan'), x='ticker', y=dt['gan']*f, color='gan', title="Ganancia/Pérdida", color_continuous_scale='RdYlGn'), use_container_width=True)
-except Exception as e: st.error("Error de datos")
     df = pd.read_csv(url)
 except Exception:
     st.error("No se pudo leer la planilla. Revisá permisos de Google Sheets.")
