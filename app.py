@@ -139,7 +139,7 @@ c4.metric("Tiempo inversión cartera", f"{anios_cartera:.2f} años" if anios_car
 # Gráficos 1: cartera por tipo de activo / broker
 left, right = st.columns(2)
 
-df_tipo = df.groupby("tipo_activo", dropna=False).agg(cartera=("hoy", "sum")).reset_index()
+df_tipo = df.groupby("tipo_activo", dropna=False).agg(inversion=("costo", "sum"), cartera=("hoy", "sum"), ganancia=("ganancia", "sum"), fecha_inicio=("fecha_operacion", "min")).reset_index()
 df_tipo["tipo_activo"] = df_tipo["tipo_activo"].astype(str)
 left.plotly_chart(
     px.pie(
@@ -164,6 +164,36 @@ right.plotly_chart(
     ),
     use_container_width=True,
 )
+
+# Tabla resumen debajo de los 2 gráficos superiores
+st.subheader("Resumen por tipo de activo")
+dias_tipo = (pd.Timestamp.now().normalize() - df_tipo["fecha_inicio"]).dt.days
+ret_tipo = (df_tipo["cartera"] / df_tipo["inversion"].replace(0, pd.NA) - 1).fillna(0)
+df_tipo["tir_anual"] = [annualize_return(ret, d if pd.notna(d) and d > 0 else 0) for ret, d in zip(ret_tipo, dias_tipo)]
+
+tabla_tipo = pd.DataFrame(
+    {
+        "Tipo de activo": df_tipo["tipo_activo"],
+        "Inversión": (df_tipo["inversion"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Cartera": (df_tipo["cartera"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "Ganancia": (df_tipo["ganancia"] * fx).apply(lambda v: fmt_money(v, symbol)),
+        "TIR anual": df_tipo["tir_anual"].map(lambda x: f"{x:.2f}%"),
+    }
+)
+
+fila_total = pd.DataFrame(
+    [
+        {
+            "Tipo de activo": "TOTAL",
+            "Inversión": fmt_money(inversion * fx, symbol),
+            "Cartera": fmt_money(cartera * fx, symbol),
+            "Ganancia": fmt_money(ganancia * fx, symbol),
+            "TIR anual": f"{rendimiento_anual:.2f}%",
+        }
+    ]
+)
+
+st.dataframe(pd.concat([tabla_tipo.sort_values("Tipo de activo"), fila_total], ignore_index=True), use_container_width=True, hide_index=True)
 
 # Gráficos 2: cartera/ganancia por ticker
 left2, right2 = st.columns(2)
