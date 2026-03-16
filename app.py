@@ -1,10 +1,12 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
-index 1a5fd5440a3d020105a160a22241c02807a678f6..9cb19c8608b0f1fbcaaaf9d62fb42cb74697dc33 100644
+index 1a5fd5440a3d020105a160a22241c02807a678f6..9670c6eb8ee86300c5519723fffb033fbd8e81c9 100644
 --- a/app.py
 +++ b/app.py
-@@ -1,62 +1,160 @@
+@@ -1,62 +1,162 @@
 -import streamlit as st
++"""Aplicación Streamlit de portfolio financiero."""
++
 +import unicodedata
 +
  import pandas as pd
