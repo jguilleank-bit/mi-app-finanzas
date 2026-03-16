@@ -1,9 +1,9 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
-index 1a5fd5440a3d020105a160a22241c02807a678f6..19e6f783cd9bbf0c2e19afbf001ce6e05077ed96 100644
+index 1a5fd5440a3d020105a160a22241c02807a678f6..9cb19c8608b0f1fbcaaaf9d62fb42cb74697dc33 100644
 --- a/app.py
 +++ b/app.py
-@@ -1,62 +1,151 @@
+@@ -1,62 +1,160 @@
 -import streamlit as st
 +import unicodedata
 +
@@ -16,6 +16,8 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..19e6f783cd9bbf0c2e19afbf001ce6e0
  
  st.set_page_config(page_title="Portfolio Pro", layout="wide")
  
++SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
++
 +
  def fmt(v, s):
      return f"{s} {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -43,6 +45,14 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..19e6f783cd9bbf0c2e19afbf001ce6e0
 +
 +    return pd.Series(pd.NaT, index=df.index)
 +
++
++def to_csv_export_url(sheet_url):
++    marker = "/d/"
++    if marker in sheet_url:
++        sheet_id = sheet_url.split(marker, 1)[1].split("/", 1)[0]
++        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
++    return sheet_url
++
  
  @st.cache_data(ttl=600)
  def get_mep():
@@ -60,8 +70,7 @@ index 1a5fd5440a3d020105a160a22241c02807a678f6..19e6f783cd9bbf0c2e19afbf001ce6e0
 -s, f = ("$", 1.0) if mon == "ARS" else ("USD", 1.0/mep)
 +s, f = ("$", 1.0) if mon == "ARS" else ("USD", 1.0 / mep)
 +
-+sid = "1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk"
-+url = f"https://docs.google.com/spreadsheets/d/1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk/edit?usp=sharing"
++url = to_csv_export_url(SHEET_URL)
  
  try:
 -    sid = "1dHJGbVWBAhLCiIQgiiWB4iEMt_39ZzXIVw3Cirl8clk"
